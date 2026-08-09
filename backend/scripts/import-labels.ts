@@ -1,0 +1,14 @@
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
+const labelRoot='C:\\Users\\USER\\Desktop\\유니라벨';
+const db=new Database(path.resolve(import.meta.dirname,'../data/inventory.db'));
+db.exec(`CREATE TABLE IF NOT EXISTS label_templates(id INTEGER PRIMARY KEY AUTOINCREMENT,vendor TEXT NOT NULL,category TEXT NOT NULL DEFAULT '',product_name TEXT NOT NULL,barcode TEXT,source_path TEXT NOT NULL UNIQUE,product_id INTEGER,FOREIGN KEY(product_id) REFERENCES products(id))`);
+const normalize=(value:string)=>value.toLowerCase().replace(/복사본|미니|라지|스몰|기본백|파우치|백|[^가-힣a-z0-9]/g,'');
+const products=db.prepare('SELECT id,name,catalog_name FROM products').all() as {id:number,name:string,catalog_name:string|null}[];
+const files:string[]=[];
+const walk=(dir:string)=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const full=path.join(dir,entry.name);if(entry.isDirectory())walk(full);else if(entry.name.toLowerCase().endsWith('.uldx'))files.push(full)}};
+walk(labelRoot);
+const upsert=db.prepare(`INSERT INTO label_templates(vendor,category,product_name,barcode,source_path,product_id) VALUES(?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET vendor=excluded.vendor,category=excluded.category,product_name=excluded.product_name,barcode=excluded.barcode,product_id=excluded.product_id`);
+db.transaction(()=>{for(const file of files){const parts=path.relative(labelRoot,file).split(path.sep);const vendor=parts.length>1?parts[0]:'공통';const category=parts.slice(1,-1).join(' / ');const productName=path.basename(file,'.uldx').replace(/\s*-\s*복사본$/,'');const text=fs.readFileSync(file).toString('utf8');const barcode=[...text.matchAll(/(?<!\d)(880\d{10})(?!\d)/g)][0]?.[1]||null;const key=normalize(productName);const product=products.find(p=>{const nameKey=normalize(p.catalog_name||p.name);return key.length>1&&(nameKey.includes(key)||key.includes(nameKey))});upsert.run(vendor,category,productName,barcode,file,product?.id||null)}})();
+console.log(db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN barcode IS NOT NULL THEN 1 ELSE 0 END) barcoded,SUM(CASE WHEN product_id IS NOT NULL THEN 1 ELSE 0 END) matched FROM label_templates`).get());
