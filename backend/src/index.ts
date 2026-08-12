@@ -9,10 +9,9 @@ import { spawnSync } from "node:child_process";
 import multer from "multer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { db } from "./db.js";
+import { db } from "./neon-db.js";
 import { normalizeAlias } from "./order-reader.js";
 import { analyzeOrderFile } from "./order-analysis-service.js";
-
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
@@ -20,13 +19,39 @@ const orderUpload = multer({
   storage: multer.memoryStorage(),
   limits: { files: 30, fileSize: 20 * 1024 * 1024 },
 });
-const orderFileDir=fileURLToPath(new URL('../data/order-files/',import.meta.url));
-const orderPreviewDir=fileURLToPath(new URL('../data/order-previews/',import.meta.url));
-fs.mkdirSync(orderFileDir,{recursive:true});fs.mkdirSync(orderPreviewDir,{recursive:true});
-const previewPython=process.env.CODEX_PYTHON||'C:/Users/USER/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe';
-const previewScript=fileURLToPath(new URL('../scripts/order-preview-pdf.py',import.meta.url));
-function createOrderPreview(file:Express.Multer.File){const extension=path.extname(file.originalname).toLowerCase()||'.bin';const key=randomUUID();const sourcePath=path.join(orderFileDir,`${key}${extension}`);const previewPath=path.join(orderPreviewDir,`${key}.pdf`);fs.writeFileSync(sourcePath,file.buffer);const result=spawnSync(previewPython,[previewScript,sourcePath,previewPath],{windowsHide:true,encoding:'utf8'});if(result.status!==0||!fs.existsSync(previewPath)){fs.rmSync(sourcePath,{force:true});throw new Error(`주문서 확인용 PDF 변환에 실패했습니다: ${file.originalname}`)}return{sourcePath,previewPath}}
-
+const orderFileDir = fileURLToPath(
+  new URL("../data/order-files/", import.meta.url),
+);
+const orderPreviewDir = fileURLToPath(
+  new URL("../data/order-previews/", import.meta.url),
+);
+fs.mkdirSync(orderFileDir, { recursive: true });
+fs.mkdirSync(orderPreviewDir, { recursive: true });
+const previewPython =
+  process.env.CODEX_PYTHON ||
+  "C:/Users/USER/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe";
+const previewScript = fileURLToPath(
+  new URL("../scripts/order-preview-pdf.py", import.meta.url),
+);
+function createOrderPreview(file: Express.Multer.File) {
+  const extension = path.extname(file.originalname).toLowerCase() || ".bin";
+  const key = randomUUID();
+  const sourcePath = path.join(orderFileDir, `${key}${extension}`);
+  const previewPath = path.join(orderPreviewDir, `${key}.pdf`);
+  fs.writeFileSync(sourcePath, file.buffer);
+  const result = spawnSync(
+    previewPython,
+    [previewScript, sourcePath, previewPath],
+    { windowsHide: true, encoding: "utf8" },
+  );
+  if (result.status !== 0 || !fs.existsSync(previewPath)) {
+    fs.rmSync(sourcePath, { force: true });
+    throw new Error(
+      `주문서 확인용 PDF 변환에 실패했습니다: ${file.originalname}`,
+    );
+  }
+  return { sourcePath, previewPath };
+}
 type LoginToken = {
   userId: number;
   email: string;
@@ -46,11 +71,12 @@ const cookieValue = (header: string | undefined, name: string) =>
     ?.slice(name.length + 1);
 const authCookie = (token: string, maxAge: number) =>
   `miyansol_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${process.env.NODE_ENV === "production" ? "; Secure" : ""}`;
-
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
-app.get("/api/auth/status", (req, res) => {
+app.get("/api/health", async (_req, res) => res.json({ ok: true }));
+app.get("/api/auth/status", async (req, res) => {
   const count = (
-    db.prepare("SELECT COUNT(*) count FROM users WHERE active=1").get() as {
+    (await db
+      .prepare("SELECT COUNT(*) count FROM users WHERE active=1")
+      .get()) as {
       count: number;
     }
   ).count;
@@ -68,7 +94,9 @@ app.get("/api/auth/status", (req, res) => {
 app.post("/api/auth/setup", async (req, res, next) => {
   try {
     const count = (
-      db.prepare("SELECT COUNT(*) count FROM users").get() as { count: number }
+      (await db.prepare("SELECT COUNT(*) count FROM users").get()) as {
+        count: number;
+      }
     ).count;
     if (count) throw new Error("관리자 계정이 이미 등록되어 있습니다.");
     const data = z
@@ -79,7 +107,7 @@ app.post("/api/auth/setup", async (req, res, next) => {
       })
       .parse(req.body);
     const hash = await bcrypt.hash(data.password, 12);
-    const result = db
+    const result = await db
       .prepare(
         "INSERT INTO users(email,name,password_hash,role) VALUES(?,?,?,'ADMIN')",
       )
@@ -102,11 +130,11 @@ app.post("/api/auth/login", async (req, res, next) => {
     const data = z
       .object({ email: z.string().trim().email(), password: z.string().min(1) })
       .parse(req.body);
-    const row = db
+    const row = (await db
       .prepare(
         "SELECT id,email,name,password_hash,role FROM users WHERE email=? AND active=1",
       )
-      .get(data.email.toLowerCase()) as
+      .get(data.email.toLowerCase())) as
       | {
           id: number;
           email: string;
@@ -119,9 +147,9 @@ app.post("/api/auth/login", async (req, res, next) => {
       return res
         .status(401)
         .json({ message: "이메일 또는 비밀번호가 올바르지 않습니다." });
-    db.prepare(
-      "UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=?",
-    ).run(row.id);
+    await db
+      .prepare("UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=?")
+      .run(row.id);
     const user: LoginToken = {
       userId: row.id,
       email: row.email,
@@ -135,7 +163,7 @@ app.post("/api/auth/login", async (req, res, next) => {
     next(error);
   }
 });
-app.post("/api/auth/logout", (_req, res) => {
+app.post("/api/auth/logout", async (_req, res) => {
   res.setHeader("Set-Cookie", authCookie("", 0));
   res.json({ ok: true });
 });
@@ -143,10 +171,11 @@ app.use((req, res, next) => {
   const token = cookieValue(req.headers.cookie, "miyansol_session");
   if (!token) return res.status(401).json({ message: "로그인이 필요합니다." });
   try {
-    (req as express.Request & { user: LoginToken }).user = jwt.verify(
-      token,
-      authSecret,
-    ) as LoginToken;
+    (
+      req as express.Request & {
+        user: LoginToken;
+      }
+    ).user = jwt.verify(token, authSecret) as LoginToken;
     next();
   } catch {
     return res
@@ -160,7 +189,11 @@ app.use(
 );
 app.patch("/api/auth/profile", async (req, res, next) => {
   try {
-    const current = (req as express.Request & { user: LoginToken }).user;
+    const current = (
+      req as express.Request & {
+        user: LoginToken;
+      }
+    ).user;
     const data = z
       .object({
         name: z.string().trim().min(2),
@@ -169,12 +202,16 @@ app.patch("/api/auth/profile", async (req, res, next) => {
         newPassword: z.string().min(8).optional().or(z.literal("")),
       })
       .parse(req.body);
-    const row = db
+    const row = (await db
       .prepare(
         "SELECT id,password_hash,role FROM users WHERE id=? AND active=1",
       )
-      .get(current.userId) as
-      | { id: number; password_hash: string; role: LoginToken["role"] }
+      .get(current.userId)) as
+      | {
+          id: number;
+          password_hash: string;
+          role: LoginToken["role"];
+        }
       | undefined;
     if (
       !row ||
@@ -183,16 +220,16 @@ app.patch("/api/auth/profile", async (req, res, next) => {
       return res
         .status(401)
         .json({ message: "현재 비밀번호가 올바르지 않습니다." });
-    const duplicate = db
+    const duplicate = await db
       .prepare("SELECT id FROM users WHERE email=? AND id!=?")
       .get(data.email.toLowerCase(), row.id);
     if (duplicate) throw new Error("이미 사용 중인 이메일입니다.");
     const passwordHash = data.newPassword
       ? await bcrypt.hash(data.newPassword, 12)
       : row.password_hash;
-    db.prepare(
-      "UPDATE users SET name=?,email=?,password_hash=? WHERE id=?",
-    ).run(data.name, data.email.toLowerCase(), passwordHash, row.id);
+    await db
+      .prepare("UPDATE users SET name=?,email=?,password_hash=? WHERE id=?")
+      .run(data.name, data.email.toLowerCase(), passwordHash, row.id);
     const user: LoginToken = {
       userId: row.id,
       email: data.email.toLowerCase(),
@@ -206,7 +243,6 @@ app.patch("/api/auth/profile", async (req, res, next) => {
     next(error);
   }
 });
-
 const movementMap = {
   FACTORY_IN: { from: null, to: "FACTORY" },
   FACTORY_OUT: { from: "FACTORY", to: null },
@@ -214,18 +250,17 @@ const movementMap = {
   PICKING_OUT: { from: "PICKING", to: null },
   PICKING_RETURN: { from: null, to: "PICKING" },
 } as const;
-
-app.get("/api/vendors", (req, res) => {
+app.get("/api/vendors", async (req, res) => {
   const type = String(req.query.type || "");
   res.json(
-    db
+    await db
       .prepare(
         "SELECT id,name,memo,factory_address,delivery_address,vendor_type,created_at FROM vendors WHERE active=1 AND (?='' OR vendor_type=?) ORDER BY name COLLATE NOCASE",
       )
       .all(type, type),
   );
 });
-app.post("/api/vendors", (req, res, next) => {
+app.post("/api/vendors", async (req, res, next) => {
   try {
     const data = z
       .object({
@@ -236,22 +271,28 @@ app.post("/api/vendors", (req, res, next) => {
         vendorType: z.enum(["FACTORY", "SALES"]).default("SALES"),
       })
       .parse(req.body);
-    const existing = db
+    const existing = (await db
       .prepare("SELECT id FROM vendors WHERE name=?")
-      .get(data.name) as { id: number } | undefined;
+      .get(data.name)) as
+      | {
+          id: number;
+        }
+      | undefined;
     if (existing) {
-      db.prepare(
-        "UPDATE vendors SET memo=?,factory_address=?,delivery_address=?,vendor_type=?,active=1 WHERE id=?",
-      ).run(
-        data.memo,
-        data.factoryAddress,
-        data.deliveryAddress,
-        data.vendorType,
-        existing.id,
-      );
+      await db
+        .prepare(
+          "UPDATE vendors SET memo=?,factory_address=?,delivery_address=?,vendor_type=?,active=1 WHERE id=?",
+        )
+        .run(
+          data.memo,
+          data.factoryAddress,
+          data.deliveryAddress,
+          data.vendorType,
+          existing.id,
+        );
       return res.status(200).json({ id: existing.id, ...data });
     }
-    const result = db
+    const result = await db
       .prepare(
         "INSERT INTO vendors(name,memo,factory_address,delivery_address,vendor_type) VALUES(?,?,?,?,?)",
       )
@@ -267,7 +308,7 @@ app.post("/api/vendors", (req, res, next) => {
     next(error);
   }
 });
-app.patch("/api/vendors/:id", (req, res, next) => {
+app.patch("/api/vendors/:id", async (req, res, next) => {
   try {
     const data = z
       .object({
@@ -278,29 +319,34 @@ app.patch("/api/vendors/:id", (req, res, next) => {
         vendorType: z.enum(["FACTORY", "SALES"]),
       })
       .parse(req.body);
-    const current = db
+    const current = (await db
       .prepare("SELECT name FROM vendors WHERE id=? AND active=1")
-      .get(req.params.id) as { name: string } | undefined;
+      .get(req.params.id)) as
+      | {
+          name: string;
+        }
+      | undefined;
     if (!current) throw new Error("거래처를 찾을 수 없습니다.");
-    db.transaction(() => {
-      db.prepare(
-        "UPDATE vendors SET name=?,memo=?,factory_address=?,delivery_address=?,vendor_type=? WHERE id=?",
-      ).run(
-        data.name,
-        data.memo,
-        data.factoryAddress,
-        data.deliveryAddress,
-        data.vendorType,
-        req.params.id,
-      );
-      if (current.name !== data.name) {
-        db.prepare("UPDATE order_imports SET vendor=? WHERE vendor=?").run(
+    await db.transaction(async () => {
+      await db
+        .prepare(
+          "UPDATE vendors SET name=?,memo=?,factory_address=?,delivery_address=?,vendor_type=? WHERE id=?",
+        )
+        .run(
           data.name,
-          current.name,
+          data.memo,
+          data.factoryAddress,
+          data.deliveryAddress,
+          data.vendorType,
+          req.params.id,
         );
-        db.prepare(
-          "UPDATE movements SET vendor_name=? WHERE vendor_name=?",
-        ).run(data.name, current.name);
+      if (current.name !== data.name) {
+        await db
+          .prepare("UPDATE order_imports SET vendor=? WHERE vendor=?")
+          .run(data.name, current.name);
+        await db
+          .prepare("UPDATE movements SET vendor_name=? WHERE vendor_name=?")
+          .run(data.name, current.name);
       }
     })();
     res.json({ ok: true });
@@ -308,25 +354,27 @@ app.patch("/api/vendors/:id", (req, res, next) => {
     next(error);
   }
 });
-app.delete("/api/vendors/:id", (req, res, next) => {
+app.delete("/api/vendors/:id", async (req, res, next) => {
   try {
-    db.prepare("UPDATE vendors SET active=0 WHERE id=?").run(req.params.id);
+    await db
+      .prepare("UPDATE vendors SET active=0 WHERE id=?")
+      .run(req.params.id);
     res.json({ ok: true });
   } catch (error) {
     next(error);
   }
 });
-app.get("/api/factory-orders", (req, res) => {
+app.get("/api/factory-orders", async (req, res) => {
   const status = String(req.query.status || "");
   res.json(
-    db
+    await db
       .prepare(
         `SELECT o.id,o.status,o.factory_address,o.delivery_address,o.memo,o.ordered_at,o.received_at,v.name vendor_name,i.product_id,i.quantity,p.sku,p.name product_name,p.color FROM factory_orders o JOIN vendors v ON v.id=o.vendor_id JOIN factory_order_items i ON i.order_id=o.id JOIN products p ON p.id=i.product_id WHERE (?='' OR o.status=?) ORDER BY o.id DESC`,
       )
       .all(status, status),
   );
 });
-app.post("/api/factory-orders", (req, res, next) => {
+app.post("/api/factory-orders", async (req, res, next) => {
   try {
     const data = z
       .object({
@@ -339,22 +387,26 @@ app.post("/api/factory-orders", (req, res, next) => {
       })
       .parse(req.body);
     if (
-      !db
+      !(await db
         .prepare(
           "SELECT id FROM vendors WHERE id=? AND active=1 AND vendor_type='FACTORY'",
         )
-        .get(data.vendorId)
+        .get(data.vendorId))
     )
       throw new Error("등록된 공장 거래처를 선택해 주세요.");
     if (
-      !db
+      !(await db
         .prepare("SELECT id FROM products WHERE id=? AND active=1")
-        .get(data.productId)
+        .get(data.productId))
     )
       throw new Error("상품을 찾을 수 없습니다.");
-    const user = (req as express.Request & { user: LoginToken }).user;
-    const id = db.transaction(() => {
-      const result = db
+    const user = (
+      req as express.Request & {
+        user: LoginToken;
+      }
+    ).user;
+    const id = await db.transaction(async () => {
+      const result = await db
         .prepare(
           "INSERT INTO factory_orders(vendor_id,factory_address,delivery_address,memo,created_by) VALUES(?,?,?,?,?)",
         )
@@ -365,9 +417,11 @@ app.post("/api/factory-orders", (req, res, next) => {
           data.memo,
           user.userId,
         );
-      db.prepare(
-        "INSERT INTO factory_order_items(order_id,product_id,quantity) VALUES(?,?,?)",
-      ).run(result.lastInsertRowid, data.productId, data.quantity);
+      await db
+        .prepare(
+          "INSERT INTO factory_order_items(order_id,product_id,quantity) VALUES(?,?,?)",
+        )
+        .run(result.lastInsertRowid, data.productId, data.quantity);
       return Number(result.lastInsertRowid);
     })();
     res.status(201).json({ id });
@@ -375,44 +429,58 @@ app.post("/api/factory-orders", (req, res, next) => {
     next(error);
   }
 });
-app.post("/api/factory-orders/:id/receive", (req, res, next) => {
+app.post("/api/factory-orders/:id/receive", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const order = db
+    const order = (await db
       .prepare(
         `SELECT o.status,i.product_id,i.quantity FROM factory_orders o JOIN factory_order_items i ON i.order_id=o.id WHERE o.id=?`,
       )
-      .get(id) as
-      { status: string; product_id: number; quantity: number } | undefined;
+      .get(id)) as
+      | {
+          status: string;
+          product_id: number;
+          quantity: number;
+        }
+      | undefined;
     if (!order) throw new Error("발주 내역을 찾을 수 없습니다.");
     if (order.status !== "ORDERED")
       throw new Error("이미 완료되었거나 취소된 발주입니다.");
-    const user = (req as unknown as express.Request & { user: LoginToken })
-      .user;
-    db.transaction(() => {
-      db.prepare(
-        "UPDATE inventory SET quantity=quantity+? WHERE product_id=? AND location='FACTORY'",
-      ).run(order.quantity, order.product_id);
-      db.prepare(
-        "INSERT INTO movements(product_id,type,from_location,to_location,quantity,worker_id,memo) VALUES(?,'FACTORY_IN',NULL,'FACTORY',?,?,?)",
-      ).run(
-        order.product_id,
-        order.quantity,
-        user.userId,
-        `공장 발주 #${id} 입고 완료`,
-      );
-      db.prepare(
-        "UPDATE factory_orders SET status='RECEIVED',received_at=CURRENT_TIMESTAMP WHERE id=? AND status='ORDERED'",
-      ).run(id);
+    const user = (
+      req as unknown as express.Request & {
+        user: LoginToken;
+      }
+    ).user;
+    await db.transaction(async () => {
+      await db
+        .prepare(
+          "UPDATE inventory SET quantity=quantity+? WHERE product_id=? AND location='FACTORY'",
+        )
+        .run(order.quantity, order.product_id);
+      await db
+        .prepare(
+          "INSERT INTO movements(product_id,type,from_location,to_location,quantity,worker_id,memo) VALUES(?,'FACTORY_IN',NULL,'FACTORY',?,?,?)",
+        )
+        .run(
+          order.product_id,
+          order.quantity,
+          user.userId,
+          `공장 발주 #${id} 입고 완료`,
+        );
+      await db
+        .prepare(
+          "UPDATE factory_orders SET status='RECEIVED',received_at=CURRENT_TIMESTAMP WHERE id=? AND status='ORDERED'",
+        )
+        .run(id);
     })();
     res.json({ ok: true });
   } catch (error) {
     next(error);
   }
 });
-app.post("/api/factory-orders/:id/cancel", (req, res, next) => {
+app.post("/api/factory-orders/:id/cancel", async (req, res, next) => {
   try {
-    const result = db
+    const result = await db
       .prepare(
         "UPDATE factory_orders SET status='CANCELLED' WHERE id=? AND status='ORDERED'",
       )
@@ -424,17 +492,17 @@ app.post("/api/factory-orders/:id/cancel", (req, res, next) => {
     next(error);
   }
 });
-app.get("/api/products", (_req, res) =>
+app.get("/api/products", async (_req, res) =>
   res.json(
-    db
+    await db
       .prepare(
         `SELECT p.*, COALESCE(f.quantity,0) factoryStock, COALESCE(k.quantity,0) pickingStock, COALESCE(f.quantity,0)+COALESCE(k.quantity,0) totalStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1 ORDER BY p.id DESC`,
       )
       .all(),
   ),
 );
-app.get("/api/products/barcode/:barcode", (req, res) => {
-  const product = db
+app.get("/api/products/barcode/:barcode", async (req, res) => {
+  const product = await db
     .prepare(
       `SELECT p.*, COALESCE(f.quantity,0) factoryStock, COALESCE(k.quantity,0) pickingStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.barcode=? AND p.active=1`,
     )
@@ -443,7 +511,7 @@ app.get("/api/products/barcode/:barcode", (req, res) => {
     return res.status(404).json({ message: "등록되지 않은 바코드입니다." });
   res.json(product);
 });
-app.post("/api/products", (req, res, next) => {
+app.post("/api/products", async (req, res, next) => {
   try {
     const d = z
       .object({
@@ -453,13 +521,15 @@ app.post("/api/products", (req, res, next) => {
         barcode: z.string().trim().optional(),
       })
       .parse(req.body);
-    const result = db.transaction(() => {
-      const r = db
+    const result = await db.transaction(async () => {
+      const r = await db
         .prepare("INSERT INTO products(sku,name,color,barcode) VALUES(?,?,?,?)")
         .run(d.sku, d.name, d.color, d.barcode || null);
-      db.prepare(
-        "INSERT INTO inventory VALUES (?, 'FACTORY', 0), (?, 'PICKING', 0)",
-      ).run(r.lastInsertRowid, r.lastInsertRowid);
+      await db
+        .prepare(
+          "INSERT INTO inventory VALUES (?, 'FACTORY', 0), (?, 'PICKING', 0)",
+        )
+        .run(r.lastInsertRowid, r.lastInsertRowid);
       return r;
     })();
     res.status(201).json({ id: Number(result.lastInsertRowid), ...d });
@@ -467,16 +537,16 @@ app.post("/api/products", (req, res, next) => {
     next(e);
   }
 });
-app.get("/api/inventory", (_req, res) =>
+app.get("/api/inventory", async (_req, res) =>
   res.json(
-    db
+    await db
       .prepare(
         `SELECT p.id,p.sku,p.name,p.color,p.barcode,p.image_path,p.catalog_name,COALESCE(f.quantity,0) factoryStock,COALESCE(k.quantity,0) pickingStock,COALESCE(f.quantity,0)+COALESCE(k.quantity,0) totalStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1 ORDER BY p.name,p.color`,
       )
       .all(),
   ),
 );
-app.get("/api/dashboard/outbound-ranking", (req, res) => {
+app.get("/api/dashboard/outbound-ranking", async (req, res) => {
   const period = ["today", "7days", "30days", "all"].includes(
     String(req.query.period),
   )
@@ -492,19 +562,19 @@ app.get("/api/dashboard/outbound-ranking", (req, res) => {
           ? "AND datetime(m.created_at)>=datetime('now','-30 days')"
           : "";
   res.json(
-    db
+    await db
       .prepare(
         `SELECT p.id,p.sku,p.name,p.color,p.image_path,SUM(m.quantity) outbound_quantity,COUNT(m.id) outbound_count,COALESCE(k.quantity,0) packing_stock FROM movements m JOIN products p ON p.id=m.product_id LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE m.type='PICKING_OUT' ${condition} GROUP BY p.id,p.sku,p.name,p.color,p.image_path,k.quantity ORDER BY outbound_quantity DESC,p.name COLLATE NOCASE LIMIT ?`,
       )
       .all(limit),
   );
 });
-app.get("/api/dashboard-inventory", (_req, res) => {
-  const allRows = db
+app.get("/api/dashboard-inventory", async (_req, res) => {
+  const allRows = (await db
     .prepare(
       `SELECT p.id,p.name,p.image_path,p.catalog_name,COALESCE(f.quantity,0) factoryStock,COALESCE(k.quantity,0) pickingStock,COALESCE(f.quantity,0)+COALESCE(k.quantity,0) totalStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1`,
     )
-    .all() as Array<Record<string, unknown>>;
+    .all()) as Array<Record<string, unknown>>;
   const names = JSON.parse(
     fs.readFileSync(
       fileURLToPath(new URL("../data/inventory-names.json", import.meta.url)),
@@ -533,38 +603,102 @@ app.get("/api/dashboard-inventory", (_req, res) => {
   }
   res.json(rows);
 });
-app.get("/api/movements", (req, res) =>
+app.get("/api/movements", async (req, res) =>
   res.json(
-    db
+    await db
       .prepare(
         `SELECT m.*,p.sku,p.name,p.color,u.name worker_name FROM movements m JOIN products p ON p.id=m.product_id LEFT JOIN users u ON u.id=m.worker_id ORDER BY m.id DESC LIMIT ?`,
       )
       .all(Math.min(Number(req.query.limit) || 100, 5000)),
   ),
 );
-app.get("/api/labels", (req, res) => {
+app.get("/api/labels", async (req, res) => {
   const search = `%${String(req.query.search || "")}%`;
   const vendor = String(req.query.vendor || "");
   res.json(
-    db
+    await db
       .prepare(
         `SELECT l.id,l.vendor,l.category,l.product_name,l.barcode,l.template_data,l.product_id,p.image_path FROM label_templates l LEFT JOIN products p ON p.id=l.product_id WHERE (?='' OR l.vendor=?) AND (l.product_name LIKE ? OR l.barcode LIKE ?) ORDER BY l.vendor,l.category,l.product_name LIMIT 5000`,
       )
       .all(vendor, vendor, search, search),
   );
 });
-app.get("/api/labels/vendors", (_req, res) => res.json(db.prepare("SELECT v.id,v.name vendor,COUNT(l.id) count FROM label_vendors v LEFT JOIN label_templates l ON l.vendor=v.name WHERE v.active=1 GROUP BY v.id,v.name ORDER BY v.name COLLATE NOCASE").all()));
-app.post("/api/labels/vendors",(req,res,next)=>{try{const name=z.string().trim().min(1,"라벨 공급처명을 입력해 주세요.").parse(req.body.name);const existing=db.prepare("SELECT id FROM label_vendors WHERE name=?").get(name) as {id:number}|undefined;if(existing){db.prepare("UPDATE label_vendors SET active=1 WHERE id=?").run(existing.id);return res.json({id:existing.id,vendor:name,count:0})}const result=db.prepare("INSERT INTO label_vendors(name) VALUES(?)").run(name);res.status(201).json({id:Number(result.lastInsertRowid),vendor:name,count:0})}catch(error){next(error)}});
-app.patch("/api/labels/vendors/:id",(req,res,next)=>{try{const name=z.string().trim().min(1,"라벨 공급처명을 입력해 주세요.").parse(req.body.name);const current=db.prepare("SELECT name FROM label_vendors WHERE id=? AND active=1").get(req.params.id) as {name:string}|undefined;if(!current)throw new Error("라벨 공급처를 찾을 수 없습니다.");db.transaction(()=>{db.prepare("UPDATE label_vendors SET name=? WHERE id=?").run(name,req.params.id);db.prepare("UPDATE label_templates SET vendor=? WHERE vendor=?").run(name,current.name)})();res.json({ok:true,vendor:name})}catch(error){next(error)}});
-app.use("/api/order-imports/manual", (req, res, next) => {
+app.get("/api/labels/vendors", async (_req, res) =>
+  res.json(
+    await db
+      .prepare(
+        "SELECT v.id,v.name vendor,COUNT(l.id) count FROM label_vendors v LEFT JOIN label_templates l ON l.vendor=v.name WHERE v.active=1 GROUP BY v.id,v.name ORDER BY v.name COLLATE NOCASE",
+      )
+      .all(),
+  ),
+);
+app.post("/api/labels/vendors", async (req, res, next) => {
+  try {
+    const name = z
+      .string()
+      .trim()
+      .min(1, "라벨 공급처명을 입력해 주세요.")
+      .parse(req.body.name);
+    const existing = (await db
+      .prepare("SELECT id FROM label_vendors WHERE name=?")
+      .get(name)) as
+      | {
+          id: number;
+        }
+      | undefined;
+    if (existing) {
+      await db
+        .prepare("UPDATE label_vendors SET active=1 WHERE id=?")
+        .run(existing.id);
+      return res.json({ id: existing.id, vendor: name, count: 0 });
+    }
+    const result = await db
+      .prepare("INSERT INTO label_vendors(name) VALUES(?)")
+      .run(name);
+    res
+      .status(201)
+      .json({ id: Number(result.lastInsertRowid), vendor: name, count: 0 });
+  } catch (error) {
+    next(error);
+  }
+});
+app.patch("/api/labels/vendors/:id", async (req, res, next) => {
+  try {
+    const name = z
+      .string()
+      .trim()
+      .min(1, "라벨 공급처명을 입력해 주세요.")
+      .parse(req.body.name);
+    const current = (await db
+      .prepare("SELECT name FROM label_vendors WHERE id=? AND active=1")
+      .get(req.params.id)) as
+      | {
+          name: string;
+        }
+      | undefined;
+    if (!current) throw new Error("라벨 공급처를 찾을 수 없습니다.");
+    await db.transaction(async () => {
+      await db
+        .prepare("UPDATE label_vendors SET name=? WHERE id=?")
+        .run(name, req.params.id);
+      await db
+        .prepare("UPDATE label_templates SET vendor=? WHERE vendor=?")
+        .run(name, current.name);
+    })();
+    res.json({ ok: true, vendor: name });
+  } catch (error) {
+    next(error);
+  }
+});
+app.use("/api/order-imports/manual", async (req, res, next) => {
   if (req.method !== "POST") return next();
   const vendor = String(req.body?.vendor || "");
   if (
-    !db
+    !(await db
       .prepare(
         "SELECT id FROM vendors WHERE name=? AND active=1 AND vendor_type='SALES'",
       )
-      .get(vendor)
+      .get(vendor))
   )
     return res
       .status(400)
@@ -582,20 +716,20 @@ app.post(
         .min(1, "거래처를 선택해 주세요.")
         .parse(req.body.vendor);
       if (
-        !db
+        !(await db
           .prepare(
             "SELECT id FROM vendors WHERE name=? AND active=1 AND vendor_type='SALES'",
           )
-          .get(vendor)
+          .get(vendor))
       )
         throw new Error("등록된 출고 거래처를 선택해 주세요.");
       const files = (req.files || []) as Express.Multer.File[];
       if (!files.length) throw new Error("주문서 파일을 선택해 주세요.");
-      const products = db
+      const products = (await db
         .prepare(
-          `SELECT p.id,p.name,p.catalog_name,p.sku,(SELECT GROUP_CONCAT(value,'|||') FROM (SELECT a.alias value FROM product_aliases a WHERE a.product_id=p.id UNION ALL SELECT l.product_name FROM label_templates l WHERE l.product_id=p.id UNION ALL SELECT l.barcode FROM label_templates l WHERE l.product_id=p.id AND l.barcode IS NOT NULL UNION ALL SELECT j.value FROM label_templates l,json_each(l.template_data) j WHERE l.product_id=p.id AND json_valid(l.template_data))) aliases FROM products p WHERE p.active=1`,
+          `SELECT p.id,p.name,p.catalog_name,p.sku,(SELECT STRING_AGG(value,'|||') FROM (SELECT a.alias value FROM product_aliases a WHERE a.product_id=p.id UNION ALL SELECT l.product_name FROM label_templates l WHERE l.product_id=p.id UNION ALL SELECT l.barcode FROM label_templates l WHERE l.product_id=p.id AND l.barcode IS NOT NULL UNION ALL SELECT j.value FROM label_templates l CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(l.template_data)='array' THEN l.template_data ELSE '[]'::jsonb END) j(value) WHERE l.product_id=p.id) alias_values) aliases FROM products p WHERE p.active=TRUE`,
         )
-        .all() as Array<{
+        .all()) as Array<{
         id: number;
         name: string;
         catalog_name: string | null;
@@ -613,9 +747,9 @@ app.post(
       );
       const imports = [];
       for (const file of files) {
-        const preview=createOrderPreview(file);
+        const preview = createOrderPreview(file);
         const analysis = await analyzeOrderFile(file, products);
-        const result = insertImport.run(
+        const result = await insertImport.run(
           vendor,
           file.originalname,
           file.mimetype,
@@ -626,14 +760,14 @@ app.post(
         );
         const importId = Number(result.lastInsertRowid);
         for (const row of analysis.items)
-          insertItem.run(
+          await insertItem.run(
             importId,
             row.sourceName,
             row.quantity,
             row.productId,
             row.confidence,
           );
-        updateStatus.run(analysis.status, importId);
+        await updateStatus.run(analysis.status, importId);
         imports.push({
           id: importId,
           filename: file.originalname,
@@ -649,7 +783,7 @@ app.post(
     }
   },
 );
-app.post("/api/order-imports/manual", (req, res, next) => {
+app.post("/api/order-imports/manual", async (req, res, next) => {
   try {
     const data = z
       .object({
@@ -665,21 +799,24 @@ app.post("/api/order-imports/manual", (req, res, next) => {
       })
       .parse(req.body);
     if (
-      !db
+      !(await db
         .prepare("SELECT id FROM vendors WHERE name=? AND active=1")
-        .get(data.vendor)
+        .get(data.vendor))
     )
       throw new Error("등록된 거래처를 선택해 주세요.");
-    const products = db
+    const products = (await db
       .prepare(`SELECT id,name FROM products WHERE active=1`)
-      .all() as Array<{ id: number; name: string }>;
+      .all()) as Array<{
+      id: number;
+      name: string;
+    }>;
     const names = new Map(
       products.map((product) => [product.id, product.name]),
     );
     if (data.items.some((item) => !names.has(item.productId)))
       throw new Error("목록에 없는 상품이 포함되어 있습니다.");
-    const id = db.transaction(() => {
-      const result = db
+    const id = await db.transaction(async () => {
+      const result = await db
         .prepare(
           "INSERT INTO order_imports(vendor,filename,file_type,status,raw_text) VALUES(?,?,'manual','READY','수동 출고 입력')",
         )
@@ -691,7 +828,7 @@ app.post("/api/order-imports/manual", (req, res, next) => {
         "INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,1)",
       );
       for (const item of data.items)
-        insert.run(
+        await insert.run(
           result.lastInsertRowid,
           names.get(item.productId),
           item.quantity,
@@ -699,35 +836,33 @@ app.post("/api/order-imports/manual", (req, res, next) => {
         );
       return Number(result.lastInsertRowid);
     })();
-    res
-      .status(201)
-      .json({
-        id,
-        items: data.items.length,
-        quantity: data.items.reduce((sum, item) => sum + item.quantity, 0),
-      });
+    res.status(201).json({
+      id,
+      items: data.items.length,
+      quantity: data.items.reduce((sum, item) => sum + item.quantity, 0),
+    });
   } catch (error) {
     next(error);
   }
 });
-app.get("/api/order-imports", (_req, res) => {
-  const imports = db
+app.get("/api/order-imports", async (_req, res) => {
+  const imports = await db
     .prepare(
       `SELECT o.*,COUNT(i.id) item_count,COALESCE(SUM(i.quantity),0) total_quantity,SUM(CASE WHEN i.id IS NOT NULL AND i.matched_product_id IS NULL THEN 1 ELSE 0 END) unmatched_count FROM order_imports o LEFT JOIN order_import_items i ON i.import_id=o.id GROUP BY o.id ORDER BY o.id DESC`,
     )
     .all();
-  const items = db
+  const items = await db
     .prepare(
       `SELECT i.*,o.vendor,o.filename,p.name matched_name,p.sku FROM order_import_items i JOIN order_imports o ON o.id=i.import_id LEFT JOIN products p ON p.id=i.matched_product_id WHERE o.status!='COMMITTED' ORDER BY o.id DESC,i.id`,
     )
     .all();
-  const summary = db
+  const summary = await db
     .prepare(
       `
     WITH demand AS (
       SELECT i.matched_product_id,COALESCE(p.name,i.source_name) name,p.sku,
         SUM(i.quantity) quantity,COUNT(DISTINCT o.vendor) vendor_count,
-        GROUP_CONCAT(DISTINCT o.vendor) vendors
+        STRING_AGG(DISTINCT o.vendor, ',') vendors
       FROM order_import_items i
       JOIN order_imports o ON o.id=i.import_id
       LEFT JOIN products p ON p.id=i.matched_product_id
@@ -735,9 +870,9 @@ app.get("/api/order-imports", (_req, res) => {
       GROUP BY CASE WHEN i.matched_product_id IS NULL THEN 'u:'||i.source_name ELSE 'p:'||i.matched_product_id END
     )
     SELECT d.*,COALESCE(k.quantity,0) picking_stock,COALESCE(f.quantity,0) factory_stock,
-      MAX(d.quantity-COALESCE(k.quantity,0),0) packing_shortage,
-      MIN(MAX(d.quantity-COALESCE(k.quantity,0),0),COALESCE(f.quantity,0)) factory_transfer_needed,
-      MAX(d.quantity-COALESCE(k.quantity,0)-COALESCE(f.quantity,0),0) total_shortage,
+      GREATEST(d.quantity-COALESCE(k.quantity,0),0) packing_shortage,
+      LEAST(GREATEST(d.quantity-COALESCE(k.quantity,0),0),COALESCE(f.quantity,0)) factory_transfer_needed,
+      GREATEST(d.quantity-COALESCE(k.quantity,0)-COALESCE(f.quantity,0),0) total_shortage,
       CASE
         WHEN d.matched_product_id IS NULL THEN 'UNMATCHED'
         WHEN COALESCE(k.quantity,0)>=d.quantity THEN 'READY'
@@ -753,10 +888,70 @@ app.get("/api/order-imports", (_req, res) => {
     .all();
   res.json({ imports, items, summary });
 });
-app.get('/api/order-imports/:id/preview',(req,res,next)=>{try{const row=db.prepare('SELECT filename,file_type,preview_pdf_path FROM order_imports WHERE id=?').get(req.params.id) as {filename:string;file_type:string;preview_pdf_path:string}|undefined;if(!row)throw new Error('주문서를 찾을 수 없습니다.');if(row.file_type==='manual')return res.status(400).json({message:'수동 입력은 목록으로 확인해 주세요.'});if(!row.preview_pdf_path||!fs.existsSync(row.preview_pdf_path))return res.status(404).json({message:'이 주문서는 변경 이전 자료라 확인용 PDF가 없습니다.'});res.type('application/pdf');res.setHeader('Content-Disposition',`inline; filename="order-${req.params.id}.pdf"`);res.sendFile(path.resolve(row.preview_pdf_path))}catch(error){next(error)}});
-app.get('/api/order-imports/:id/items',(req,res,next)=>{try{const order=db.prepare('SELECT id,vendor,filename,file_type,status FROM order_imports WHERE id=?').get(req.params.id);if(!order)throw new Error('주문서를 찾을 수 없습니다.');const rows=db.prepare('SELECT i.id,i.source_name,i.quantity,i.matched_product_id,p.sku,p.name matched_name FROM order_import_items i LEFT JOIN products p ON p.id=i.matched_product_id WHERE i.import_id=? ORDER BY i.id').all(req.params.id);res.json({order,items:rows})}catch(error){next(error)}});
-app.patch('/api/order-imports/:id/review',(req,res,next)=>{try{const result=db.prepare("UPDATE order_imports SET reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status!='COMMITTED'").run(req.params.id);if(!result.changes)throw new Error('확인할 주문서를 찾을 수 없습니다.');res.json({ok:true})}catch(error){next(error)}});
-app.patch("/api/order-import-items/:id", (req, res, next) => {
+app.get("/api/order-imports/:id/preview", async (req, res, next) => {
+  try {
+    const row = (await db
+      .prepare(
+        "SELECT filename,file_type,preview_pdf_path FROM order_imports WHERE id=?",
+      )
+      .get(req.params.id)) as
+      | {
+          filename: string;
+          file_type: string;
+          preview_pdf_path: string;
+        }
+      | undefined;
+    if (!row) throw new Error("주문서를 찾을 수 없습니다.");
+    if (row.file_type === "manual")
+      return res
+        .status(400)
+        .json({ message: "수동 입력은 목록으로 확인해 주세요." });
+    if (!row.preview_pdf_path || !fs.existsSync(row.preview_pdf_path))
+      return res.status(404).json({
+        message: "이 주문서는 변경 이전 자료라 확인용 PDF가 없습니다.",
+      });
+    res.type("application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="order-${req.params.id}.pdf"`,
+    );
+    res.sendFile(path.resolve(row.preview_pdf_path));
+  } catch (error) {
+    next(error);
+  }
+});
+app.get("/api/order-imports/:id/items", async (req, res, next) => {
+  try {
+    const order = await db
+      .prepare(
+        "SELECT id,vendor,filename,file_type,status FROM order_imports WHERE id=?",
+      )
+      .get(req.params.id);
+    if (!order) throw new Error("주문서를 찾을 수 없습니다.");
+    const rows = await db
+      .prepare(
+        "SELECT i.id,i.source_name,i.quantity,i.matched_product_id,p.sku,p.name matched_name FROM order_import_items i LEFT JOIN products p ON p.id=i.matched_product_id WHERE i.import_id=? ORDER BY i.id",
+      )
+      .all(req.params.id);
+    res.json({ order, items: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+app.patch("/api/order-imports/:id/review", async (req, res, next) => {
+  try {
+    const result = await db
+      .prepare(
+        "UPDATE order_imports SET reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status!='COMMITTED'",
+      )
+      .run(req.params.id);
+    if (!result.changes) throw new Error("확인할 주문서를 찾을 수 없습니다.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+app.patch("/api/order-import-items/:id", async (req, res, next) => {
   try {
     const data = z
       .object({
@@ -764,81 +959,112 @@ app.patch("/api/order-import-items/:id", (req, res, next) => {
         quantity: z.number().int().positive(),
       })
       .parse(req.body);
-    const exists = db
+    const exists = await db
       .prepare("SELECT id FROM products WHERE id=? AND active=1")
       .get(data.productId);
     if (!exists) throw new Error("선택한 상품을 찾을 수 없습니다.");
-    const item = db
+    const item = (await db
       .prepare(
         "SELECT import_id,source_name FROM order_import_items WHERE id=?",
       )
-      .get(req.params.id) as
-      { import_id: number; source_name: string } | undefined;
+      .get(req.params.id)) as
+      | {
+          import_id: number;
+          source_name: string;
+        }
+      | undefined;
     if (!item) throw new Error("주문 품목을 찾을 수 없습니다.");
-    db.transaction(() => {
-      db.prepare(
-        "UPDATE order_import_items SET matched_product_id=?,quantity=?,confidence=1 WHERE id=?",
-      ).run(data.productId, data.quantity, req.params.id);
+    await db.transaction(async () => {
+      await db
+        .prepare(
+          "UPDATE order_import_items SET matched_product_id=?,quantity=?,confidence=1 WHERE id=?",
+        )
+        .run(data.productId, data.quantity, req.params.id);
       const normalized = normalizeAlias(item.source_name);
       if (normalized)
-        db.prepare(
-          "INSERT INTO product_aliases(product_id,alias,normalized_alias,source) VALUES(?,?,?,'ORDER_CORRECTION') ON CONFLICT(normalized_alias) DO UPDATE SET product_id=excluded.product_id,alias=excluded.alias,source='ORDER_CORRECTION'",
-        ).run(data.productId, item.source_name, normalized);
+        await db
+          .prepare(
+            "INSERT INTO product_aliases(product_id,alias,normalized_alias,source) VALUES(?,?,?,'ORDER_CORRECTION') ON CONFLICT(normalized_alias) DO UPDATE SET product_id=excluded.product_id,alias=excluded.alias,source='ORDER_CORRECTION'",
+          )
+          .run(data.productId, item.source_name, normalized);
       const unmatched = (
-        db
+        (await db
           .prepare(
             "SELECT COUNT(*) count FROM order_import_items WHERE import_id=? AND matched_product_id IS NULL",
           )
-          .get(item.import_id) as { count: number }
+          .get(item.import_id)) as {
+          count: number;
+        }
       ).count;
-      db.prepare("UPDATE order_imports SET status=? WHERE id=?").run(
-        unmatched ? "REVIEW" : "READY",
-        item.import_id,
-      );
+      await db
+        .prepare("UPDATE order_imports SET status=? WHERE id=?")
+        .run(unmatched ? "REVIEW" : "READY", item.import_id);
     })();
     res.json({ ok: true, learned: true });
   } catch (error) {
     next(error);
   }
 });
-app.delete("/api/order-imports/:id", (req, res, next) => {
+app.delete("/api/order-imports/:id", async (req, res, next) => {
   try {
-    const row = db
+    const row = (await db
       .prepare("SELECT status FROM order_imports WHERE id=?")
-      .get(req.params.id) as { status: string;source_path?:string;preview_pdf_path?:string } | undefined;
+      .get(req.params.id)) as
+      | {
+          status: string;
+          source_path?: string;
+          preview_pdf_path?: string;
+        }
+      | undefined;
     if (!row) throw new Error("주문서를 찾을 수 없습니다.");
     if (row.status === "COMMITTED")
       throw new Error("이미 출고된 주문서는 삭제할 수 없습니다.");
-    db.prepare("DELETE FROM order_imports WHERE id=?").run(req.params.id);
+    await db.prepare("DELETE FROM order_imports WHERE id=?").run(req.params.id);
     res.json({ ok: true });
   } catch (error) {
     next(error);
   }
 });
-app.post("/api/order-imports/commit", (req, res, next) => {
+app.post("/api/order-imports/commit", async (req, res, next) => {
   try {
     const data = z
       .object({ importIds: z.array(z.number().int().positive()).min(1) })
       .parse(req.body);
     const placeholders = data.importIds.map(() => "?").join(",");
-    const rows = db
+    const rows = (await db
       .prepare(
         `SELECT i.*,o.vendor,o.filename FROM order_import_items i JOIN order_imports o ON o.id=i.import_id WHERE o.id IN (${placeholders}) AND o.status!='COMMITTED'`,
       )
-      .all(...data.importIds) as Array<{
+      .all(...data.importIds)) as Array<{
       matched_product_id: number | null;
       quantity: number;
       vendor: string;
       filename: string;
     }>;
     if (!rows.length) throw new Error("출고할 주문서가 없습니다.");
-    const unreviewed=(db.prepare(`SELECT COUNT(*) count FROM order_imports WHERE id IN (${placeholders}) AND reviewed_at IS NULL`).get(...data.importIds) as {count:number}).count;if(unreviewed)throw new Error(`파일 확인이 끝나지 않은 주문서가 ${unreviewed}개 있습니다.`);
+    const unreviewed = (
+      (await db
+        .prepare(
+          `SELECT COUNT(*) count FROM order_imports WHERE id IN (${placeholders}) AND reviewed_at IS NULL`,
+        )
+        .get(...data.importIds)) as {
+        count: number;
+      }
+    ).count;
+    if (unreviewed)
+      throw new Error(
+        `파일 확인이 끝나지 않은 주문서가 ${unreviewed}개 있습니다.`,
+      );
     if (rows.some((row) => !row.matched_product_id))
       throw new Error("매칭되지 않은 품목을 먼저 확인해 주세요.");
     const productTotals = new Map<number, number>();
     const vendorTotals = new Map<
       string,
-      { productId: number; vendor: string; quantity: number }
+      {
+        productId: number;
+        vendor: string;
+        quantity: number;
+      }
     >();
     for (const row of rows) {
       const productId = row.matched_product_id!;
@@ -855,30 +1081,44 @@ app.post("/api/order-imports/commit", (req, res, next) => {
       current.quantity += row.quantity;
       vendorTotals.set(key, current);
     }
-    const user = (req as express.Request & { user: LoginToken }).user;
-    db.transaction(() => {
+    const user = (
+      req as express.Request & {
+        user: LoginToken;
+      }
+    ).user;
+    await db.transaction(async () => {
       for (const [productId, quantity] of productTotals) {
-        const stock = db
+        const stock = (await db
           .prepare(
             "SELECT quantity FROM inventory WHERE product_id=? AND location='PICKING'",
           )
-          .get(productId) as { quantity: number } | undefined;
+          .get(productId)) as
+          | {
+              quantity: number;
+            }
+          | undefined;
         if (!stock || stock.quantity < quantity)
           throw new Error(
             `패킹 재고가 부족한 상품이 있습니다. 필요 ${quantity}개 / 보유 ${stock?.quantity || 0}개`,
           );
       }
       for (const { productId, vendor, quantity } of vendorTotals.values()) {
-        db.prepare(
-          "UPDATE inventory SET quantity=quantity-? WHERE product_id=? AND location='PICKING'",
-        ).run(quantity, productId);
-        db.prepare(
-          "INSERT INTO movements(product_id,type,from_location,to_location,quantity,worker_id,memo,vendor_name) VALUES(?,'PICKING_OUT','PICKING',NULL,?,?,?,?)",
-        ).run(productId, quantity, user.userId, "거래처 주문서 출고", vendor);
+        await db
+          .prepare(
+            "UPDATE inventory SET quantity=quantity-? WHERE product_id=? AND location='PICKING'",
+          )
+          .run(quantity, productId);
+        await db
+          .prepare(
+            "INSERT INTO movements(product_id,type,from_location,to_location,quantity,worker_id,memo,vendor_name) VALUES(?,'PICKING_OUT','PICKING',NULL,?,?,?,?)",
+          )
+          .run(productId, quantity, user.userId, "거래처 주문서 출고", vendor);
       }
-      db.prepare(
-        `UPDATE order_imports SET status='COMMITTED' WHERE id IN (${placeholders})`,
-      ).run(...data.importIds);
+      await db
+        .prepare(
+          `UPDATE order_imports SET status='COMMITTED' WHERE id IN (${placeholders})`,
+        )
+        .run(...data.importIds);
     })();
     res.json({
       ok: true,
@@ -889,28 +1129,32 @@ app.post("/api/order-imports/commit", (req, res, next) => {
     next(error);
   }
 });
-app.post("/api/chat", (req, res, next) => {
+app.post("/api/chat", async (req, res, next) => {
   try {
     const message = z
       .object({ message: z.string().trim().min(1) })
       .parse(req.body).message;
     let answer = "";
     if (/주문|오더|출고/.test(message) && /합계|전체|얼마|몇/.test(message)) {
-      const row = db
+      const row = (await db
         .prepare(
           `SELECT COUNT(DISTINCT o.id) files,COUNT(DISTINCT o.vendor) vendors,COALESCE(SUM(i.quantity),0) quantity FROM order_imports o LEFT JOIN order_import_items i ON i.import_id=o.id WHERE o.status!='COMMITTED'`,
         )
-        .get() as { files: number; vendors: number; quantity: number };
+        .get()) as {
+        files: number;
+        vendors: number;
+        quantity: number;
+      };
       answer = `현재 출고 대기 주문서는 ${row.files}개 파일, ${row.vendors}개 거래처, 총 ${row.quantity}개입니다.`;
     } else if (/재고/.test(message)) {
       const keyword = message
         .replace(/재고|알려줘|확인|몇개|몇 개/g, "")
         .trim();
-      const rows = db
+      const rows = (await db
         .prepare(
           `SELECT p.name,COALESCE(f.quantity,0)+COALESCE(k.quantity,0) total,COALESCE(k.quantity,0) packing FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1 AND p.name LIKE ? LIMIT 10`,
         )
-        .all(`%${keyword}%`) as Array<{
+        .all(`%${keyword}%`)) as Array<{
         name: string;
         total: number;
         packing: number;
@@ -931,18 +1175,22 @@ app.post("/api/chat", (req, res, next) => {
     next(error);
   }
 });
-app.get("/api/labels/:id/download", (req, res) => {
-  const row = db
+app.get("/api/labels/:id/download", async (req, res) => {
+  const row = (await db
     .prepare("SELECT source_path,product_name FROM label_templates WHERE id=?")
-    .get(req.params.id) as
-    { source_path: string; product_name: string } | undefined;
+    .get(req.params.id)) as
+    | {
+        source_path: string;
+        product_name: string;
+      }
+    | undefined;
   if (!row)
     return res.status(404).json({ message: "라벨을 찾을 수 없습니다." });
   if (!row.source_path.startsWith("C:\\Users\\USER\\Desktop\\유니라벨\\"))
     return res.status(403).json({ message: "허용되지 않은 파일입니다." });
   res.download(row.source_path, `${row.product_name}.uldx`);
 });
-app.post("/api/labels/batch-open", (req, res, next) => {
+app.post("/api/labels/batch-open", async (req, res, next) => {
   try {
     const data = z
       .object({
@@ -963,8 +1211,12 @@ app.post("/api/labels/batch-open", (req, res, next) => {
     let opened = 0;
     console.log("[labels/batch-open] request", { items: data.items.length });
     for (const item of data.items) {
-      const row = find.get(item.id) as
-        { source_path: string; product_name: string } | undefined;
+      const row = (await find.get(item.id)) as
+        | {
+            source_path: string;
+            product_name: string;
+          }
+        | undefined;
       if (!row) throw new Error(`라벨 번호 ${item.id}을 찾을 수 없습니다.`);
       if (!row.source_path.startsWith("C:\\Users\\USER\\Desktop\\유니라벨\\"))
         throw new Error("허용되지 않은 라벨 파일입니다.");
@@ -993,7 +1245,7 @@ app.post("/api/labels/batch-open", (req, res, next) => {
     next(e);
   }
 });
-app.post("/api/movements", (req, res, next) => {
+app.post("/api/movements", async (req, res, next) => {
   try {
     const d = z
       .object({
@@ -1011,51 +1263,64 @@ app.post("/api/movements", (req, res, next) => {
         vendorName: z.string().trim().default(""),
       })
       .parse(req.body);
-    if ((d.type === "PICKING_OUT" || d.type === "PICKING_RETURN") && !d.vendorName)
+    if (
+      (d.type === "PICKING_OUT" || d.type === "PICKING_RETURN") &&
+      !d.vendorName
+    )
       throw new Error("출고 거래처를 선택해 주세요.");
     if (
       d.vendorName &&
-      !db
+      !(await db
         .prepare(
           "SELECT id FROM vendors WHERE name=? AND active=1 AND vendor_type='SALES'",
         )
-        .get(d.vendorName)
+        .get(d.vendorName))
     )
       throw new Error("등록된 출고 거래처를 선택해 주세요.");
     const route = movementMap[d.type];
-    const id = db.transaction(() => {
+    const id = await db.transaction(async () => {
       if (route.from) {
-        const stock = db
+        const stock = (await db
           .prepare(
             "SELECT quantity FROM inventory WHERE product_id=? AND location=?",
           )
-          .get(d.productId, route.from) as { quantity: number } | undefined;
+          .get(d.productId, route.from)) as
+          | {
+              quantity: number;
+            }
+          | undefined;
         if (!stock || stock.quantity < d.quantity)
           throw new Error(
             `${route.from === "FACTORY" ? "공장" : "패킹"} 재고가 부족합니다.`,
           );
-        db.prepare(
-          "UPDATE inventory SET quantity=quantity-? WHERE product_id=? AND location=?",
-        ).run(d.quantity, d.productId, route.from);
+        await db
+          .prepare(
+            "UPDATE inventory SET quantity=quantity-? WHERE product_id=? AND location=?",
+          )
+          .run(d.quantity, d.productId, route.from);
       }
       if (route.to)
-        db.prepare(
-          "UPDATE inventory SET quantity=quantity+? WHERE product_id=? AND location=?",
-        ).run(d.quantity, d.productId, route.to);
-      return db
-        .prepare(
-          "INSERT INTO movements(product_id,type,from_location,to_location,quantity,worker_id,memo,vendor_name) VALUES(?,?,?,?,?,?,?,?)",
-        )
-        .run(
-          d.productId,
-          d.type,
-          route.from,
-          route.to,
-          d.quantity,
-          d.workerId,
-          d.memo,
-          d.vendorName,
-        ).lastInsertRowid;
+        await db
+          .prepare(
+            "UPDATE inventory SET quantity=quantity+? WHERE product_id=? AND location=?",
+          )
+          .run(d.quantity, d.productId, route.to);
+      return (
+        await db
+          .prepare(
+            "INSERT INTO movements(product_id,type,from_location,to_location,quantity,worker_id,memo,vendor_name) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            d.productId,
+            d.type,
+            route.from,
+            route.to,
+            d.quantity,
+            d.workerId,
+            d.memo,
+            d.vendorName,
+          )
+      ).lastInsertRowid;
     })();
     res.status(201).json({ id: Number(id), ...d });
   } catch (e) {
@@ -1074,6 +1339,9 @@ app.use(
     res.status(message.includes("UNIQUE") ? 409 : 400).json({ message });
   },
 );
-app.listen(Number(process.env.PORT) || 4000, () =>
-  console.log("API: http://localhost:4000/api"),
-);
+if (!process.env.VERCEL)
+  app.listen(Number(process.env.PORT) || 4000, async () =>
+    console.log(`API: http://localhost:${Number(process.env.PORT) || 4000}/api`),
+  );
+
+export default app;

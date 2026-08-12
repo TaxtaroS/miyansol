@@ -5,6 +5,7 @@ backend/.venv/
 !.env.example
 dist/
 dev-server*.log
+neon-server*.log
 *.db
 *.db-shm
 *.db-wal
