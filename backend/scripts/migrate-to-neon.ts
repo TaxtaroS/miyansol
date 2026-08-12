@@ -32,10 +32,14 @@ try{
   await client.query(schema);
   for(const [table,columns] of tables){
     const rows=sqlite.prepare(`SELECT ${columns.join(',')} FROM ${table}`).all() as Record<string,unknown>[];
-    for(const row of rows){
-      const values=columns.map(column=>column==='active'?Boolean(row[column]):row[column]);
-      const placeholders=columns.map((_,index)=>`$${index+1}`).join(',');
-      await client.query(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,values);
+    for(let start=0;start<rows.length;start+=200){
+      const chunk=rows.slice(start,start+200);
+      const values:unknown[]=[];
+      const tuples=chunk.map((row,rowIndex)=>`(${columns.map((column,columnIndex)=>{
+        values.push(column==='active'?Boolean(row[column]):row[column]);
+        return `$${rowIndex*columns.length+columnIndex+1}`;
+      }).join(',')})`);
+      await client.query(`INSERT INTO ${table} (${columns.join(',')}) VALUES ${tuples.join(',')} ON CONFLICT DO NOTHING`,values);
     }
     console.log(`${table}: ${rows.length}개 이전`);
   }

@@ -1,5 +1,8 @@
 node_modules/
 backend/.venv/
+.env
+.env.*
+!.env.example
 dist/
 dev-server*.log
 *.db
