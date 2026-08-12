@@ -1,0 +1,20 @@
+.calendar-day.today {
+  z-index: 1;
+  background: #fff8d9;
+  box-shadow: inset 0 0 0 2px #2874e8;
+}
+
+.calendar-day.today:hover {
+  background: #fff3bd;
+}
+
+.calendar-day.today .day-number {
+  display: inline-grid;
+  place-items: center;
+  min-width: 27px;
+  height: 27px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: #2874e8;
+  color: #fff;
+}

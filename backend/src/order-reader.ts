@@ -1,6 +1,9 @@
 import ExcelJS from 'exceljs';
 import { PDFParse } from 'pdf-parse';
-import { createWorker } from 'tesseract.js';
+import { createWorker, PSM } from 'tesseract.js';
+import sharp from 'sharp';
+import {cleanOcrText,normalizeOrderQuantity} from './order-text-normalizer.js';
+import {readImageWithPaddle} from './paddle-ocr.js';
 
 export type ParsedOrderRow={name:string;quantity:number};
 
@@ -8,16 +11,17 @@ const productHeaders=/상품명|품명|제품명|상품|품목|옵션|product|it
 const quantityHeaders=/주문수량|출고수량|수량|qty|quantity|count/i;
 const ignored=/^(합계|총계|총\s|total|수량|상품명|품명|제품명|순번|번호)/i;
 
-function clean(value:string){return value.replace(/\s+/g,' ').replace(/^[\-•·\d.)\s]+/,'').trim()}
-function positiveInt(value:unknown){const number=Number(String(value??'').replace(/,/g,'').match(/\d+/)?.[0]);return Number.isInteger(number)&&number>0&&number<=100000?number:0}
+function clean(value:string){return cleanOcrText(value)}
+function positiveInt(value:unknown){return normalizeOrderQuantity(value)}
 function cellText(cell:ExcelJS.Cell){try{return cell.text?.trim()||''}catch{const value=cell.value;if(value==null)return '';if(typeof value==='string'||typeof value==='number')return String(value).trim();if(typeof value==='object'){if('result' in value)return String(value.result??'').trim();if('text' in value)return String(value.text??'').trim();if('richText' in value&&Array.isArray(value.richText))return value.richText.map(part=>part.text||'').join('').trim()}return ''}}
 
 export function rowsFromText(text:string):ParsedOrderRow[]{
   const rows:ParsedOrderRow[]=[];
   for(const original of text.split(/\r?\n/)){
     const line=clean(original);if(!line||ignored.test(line))continue;
-    const match=line.match(/^(.+?)(?:\s*[|,\t]\s*|\s{2,}|\s+[xX*]\s*|\s+)(\d{1,6})\s*(?:개|EA|PCS)?$/i);
-    if(!match)continue;const name=clean(match[1]);const quantity=positiveInt(match[2]);
+    const match=line.match(/^(.+?)(?:\s*[|,\t]\s*|\s{2,}|\s+[xX*]\s*|\s+)(\d{1,6})\s*(?:개|EA|PCS)?\s*[|\]\)\\._-]*\s*$/i);
+    if(!match)continue;let name=clean(match[1]);const quantity=positiveInt(match[2]);
+    const brandIndex=name.toLowerCase().lastIndexOf('miyansol');if(brandIndex>=0)name=name.slice(brandIndex).replace(/^miyansol\s+(?:llg|jewe)?\s*/i,'').trim();
     if(name&&!ignored.test(name)&&quantity)rows.push({name,quantity});
   }
   return mergeRows(rows);
@@ -60,13 +64,14 @@ async function readPdf(buffer:Buffer){
     await parser.destroy();
   }
 }
-async function readImage(buffer:Buffer){const worker=await createWorker('kor+eng');try{const result=await worker.recognize(buffer);const raw=result.data.text||'';return {rows:rowsFromText(raw),raw}}finally{await worker.terminate()}}
+async function enhancedImage(buffer:Buffer){const metadata=await sharp(buffer).metadata();const width=metadata.width||1200,height=metadata.height||1600;return sharp(buffer).extract({left:0,top:Math.round(height*.1),width,height:Math.max(1,Math.round(height*.58))}).resize({width:Math.max(1800,width*3),withoutEnlargement:false}).grayscale().normalize().sharpen().toBuffer()}
+async function readImage(buffer:Buffer,extension='jpg'){const paddle=readImageWithPaddle(buffer,extension);if(paddle?.rows.length)return {rows:paddle.rows.map(row=>({name:row.name,quantity:row.quantity})),raw:paddle.raw};const worker=await createWorker('kor+eng');try{await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,preserve_interword_spaces:'1',user_defined_dpi:'300'});const prepared=await enhancedImage(buffer);const result=await worker.recognize(prepared);const raw=result.data.text||'';return {rows:rowsFromText(raw),raw}}finally{await worker.terminate()}}
 
 export async function readOrderFile(file:{buffer:Buffer;mimetype:string;originalname:string}){
   const extension=file.originalname.split('.').pop()?.toLowerCase();
   if(extension==='xlsx')return readExcel(file.buffer);
   if(extension==='pdf'||file.mimetype==='application/pdf')return readPdf(file.buffer);
-  if(['jpg','jpeg','png','webp','bmp'].includes(extension||'')||file.mimetype.startsWith('image/'))return readImage(file.buffer);
+  if(['jpg','jpeg','png','webp','bmp'].includes(extension||'')||file.mimetype.startsWith('image/'))return readImage(file.buffer,extension||'jpg');
   throw new Error(`${file.originalname}: 지원하지 않는 파일 형식입니다.`);
 }
 
@@ -74,8 +79,9 @@ function normalized(value:string){return value.toLowerCase().replace(/기본백|
 function bigrams(value:string){const set=new Set<string>();for(let i=0;i<value.length-1;i++)set.add(value.slice(i,i+2));return set}
 function similarity(a:string,b:string){if(a===b)return 1;if(!a||!b)return 0;if(a.includes(b)||b.includes(a)){const ratio=Math.min(a.length,b.length)/Math.max(a.length,b.length);return .65+.35*ratio}const aa=bigrams(a),bb=bigrams(b);let common=0;for(const token of aa)if(bb.has(token))common++;return (2*common)/(aa.size+bb.size||1)}
 
-export function matchProduct(name:string,products:Array<{id:number;name:string;catalog_name?:string|null;sku:string}>) {
+export function normalizeAlias(value:string){return normalized(value)}
+export function matchProduct(name:string,products:Array<{id:number;name:string;catalog_name?:string|null;sku:string;aliases?:string|null}>) {
   const source=normalized(name);let best:{id:number;score:number}|null=null;
-  for(const product of products){const score=Math.max(similarity(source,normalized(product.name)),similarity(source,normalized(product.catalog_name||'')),similarity(source,normalized(product.sku)));if(!best||score>best.score)best={id:product.id,score}}
+  for(const product of products){const sku=normalized(product.sku);const skuMatch=sku.length>=4&&source.includes(sku)?.99:0;const aliasScore=(product.aliases||'').split('|||').filter(Boolean).reduce((score,alias)=>Math.max(score,similarity(source,normalized(alias))),0);const score=Math.max(skuMatch,aliasScore,similarity(source,normalized(product.name)),similarity(source,normalized(product.catalog_name||'')),similarity(source,sku));if(!best||score>best.score)best={id:product.id,score}}
   return best&&best.score>=.72?best:null;
 }
