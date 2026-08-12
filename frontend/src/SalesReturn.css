@@ -1,0 +1,1 @@
+.sales-return{background:#f3eaff;color:#7441ac}.calendar-summary:has(>div:nth-child(4)){grid-template-columns:repeat(4,1fr)}@media(max-width:800px){.calendar-summary:has(>div:nth-child(4)){grid-template-columns:1fr}}

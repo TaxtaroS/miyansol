@@ -1,0 +1,54 @@
+import Database from 'better-sqlite3';
+import { Pool } from 'pg';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const databaseUrl=process.env.DATABASE_URL;
+if(!databaseUrl)throw new Error('Neon의 DATABASE_URL을 먼저 설정해 주세요.');
+
+const sqlite=new Database(path.join(root,'data','inventory.db'),{readonly:true});
+const pool=new Pool({connectionString:databaseUrl,ssl:{rejectUnauthorized:false}});
+const schema=fs.readFileSync(path.join(root,'neon-schema.sql'),'utf8');
+
+const tables:[string,string[]][]=[
+  ['products',['id','sku','name','color','active','barcode','image_path','source_url','catalog_name','created_at']],
+  ['users',['id','email','name','password_hash','role','active','created_at','last_login_at']],
+  ['inventory',['product_id','location','quantity']],
+  ['vendors',['id','name','memo','factory_address','delivery_address','vendor_type','active','created_at']],
+  ['factory_orders',['id','vendor_id','status','factory_address','delivery_address','memo','ordered_at','received_at','created_by']],
+  ['factory_order_items',['id','order_id','product_id','quantity']],
+  ['product_aliases',['id','product_id','alias','normalized_alias','source','created_at']],
+  ['label_templates',['id','vendor','category','product_name','barcode','source_path','product_id','template_data']],
+  ['order_imports',['id','vendor','filename','file_type','status','raw_text','created_at']],
+  ['order_import_items',['id','import_id','source_name','quantity','matched_product_id','confidence']],
+  ['movements',['id','product_id','type','from_location','to_location','quantity','worker_id','memo','created_at']],
+];
+
+const client=await pool.connect();
+try{
+  await client.query('BEGIN');
+  await client.query(schema);
+  for(const [table,columns] of tables){
+    const rows=sqlite.prepare(`SELECT ${columns.join(',')} FROM ${table}`).all() as Record<string,unknown>[];
+    for(const row of rows){
+      const values=columns.map(column=>column==='active'?Boolean(row[column]):row[column]);
+      const placeholders=columns.map((_,index)=>`$${index+1}`).join(',');
+      await client.query(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,values);
+    }
+    console.log(`${table}: ${rows.length}개 이전`);
+  }
+  for(const table of ['products','users','vendors','factory_orders','factory_order_items','product_aliases','label_templates','order_imports','order_import_items','movements']){
+    await client.query(`SELECT setval(pg_get_serial_sequence('${table}','id'),COALESCE((SELECT MAX(id) FROM ${table}),1),true)`);
+  }
+  await client.query('COMMIT');
+  console.log('Neon 데이터 이전이 완료되었습니다.');
+}catch(error){
+  await client.query('ROLLBACK');
+  throw error;
+}finally{
+  client.release();
+  await pool.end();
+  sqlite.close();
+}
