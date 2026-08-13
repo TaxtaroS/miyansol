@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pencil, Plus, Printer, Search, Trash2 } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import './LabelVendorManagement.css';
+import { majorCategory as dashboardMajorCategory, majorOrder } from './product-categories';
 
 type Vendor = { id: number; vendor: string; count: number };
-type Label = { id: number; vendor: string; category: string; product_name: string; barcode: string | null; image_path: string | null; template_data: string | null };
+type Label = { id: number; vendor: string; category: string; product_name: string; barcode: string | null; image_path: string | null; template_data: string | string[] | null; product_id: number | null; dashboard_name: string | null; catalog_name: string | null };
 type QueueItem = Label & { quantity: number };
 
-const categoryOrder = ['베이직 백','기본백','미니백','하트백','피어백','라군 빅백','아코디언백','브릭백','메모리백','퀼팅 파우치','미니 파우치','스퀘어 파우치 A','스퀘어 파우치 B','스퀘어 3파우치','만두백','밍크백','어그백','호피백','멍미참','꽃참','플라워키','하트참','타월참','럭키참','미니참','롱참','로프참','로프 스트랩','핸드폰 스트랩','기타'];
+const categoryOrder: readonly string[] = majorOrder;
 const vendorSamples: Record<string,string> = {
   '셀메이트':'/uploads/label-samples/sellmate.png',
   '영풍 이요샵':'/uploads/label-samples/youngpoong-eyoshop.png',
@@ -21,9 +22,12 @@ const vendorSamples: Record<string,string> = {
 };
 
 function majorCategory(label: Label) {
+  if (label.product_id && label.dashboard_name) {
+    return dashboardMajorCategory({name:label.dashboard_name,catalog_name:label.catalog_name || undefined});
+  }
   const category = (label.category || '').replace(/\s/g, '').toLowerCase();
   const name = label.product_name.replace(/\s/g, '').toLowerCase();
-  if (label.vendor.includes('셀메이트') && (category === 'l' || category === 's' || name.includes('basicbag') || name.includes('기본백'))) return '베이직 백';
+  if (label.vendor.includes('셀메이트') && (category === 'l' || category === 's' || name.includes('basicbag') || name.includes('기본백'))) return '기본백';
   if (category === 'l' || category === 's') return '기본백';
   if (category === 'mini' || category.includes('미니백')) return '미니백';
   if (category === 'heart' || category.includes('하트백')) return '하트백';
@@ -60,12 +64,12 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>\"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[character] || character));
 }
 
-function barcodeSvg(value: string, options: {fontSize?:number;height?:number;width?:number;format?:'EAN13'|'CODE128'} = {}) {
+function barcodeSvg(value: string, options: {fontSize?:number;height?:number;width?:number;format?:'EAN13'|'CODE128';font?:string;fontOptions?:string} = {}) {
   if (!value.trim()) return '<div class="no-barcode">바코드 번호 미등록</div>';
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   try {
     const format = options.format || (/^\d{13}$/.test(value) ? 'EAN13' : 'CODE128');
-    JsBarcode(svg, value, {format, displayValue:true, font:'Arial', fontOptions:'', fontSize:options.fontSize||15, height:options.height||70, margin:0, width:options.width||2, textMargin:0});
+    JsBarcode(svg, value, {format, displayValue:true, font:options.font||'Arial', fontOptions:options.fontOptions||'', fontSize:options.fontSize||15, height:options.height||70, margin:0, width:options.width||2, textMargin:0});
     svg.setAttribute('preserveAspectRatio','none');
     return new XMLSerializer().serializeToString(svg);
   } catch {
@@ -84,6 +88,7 @@ function vendorKind(vendor: string) {
 }
 
 function templateValues(item: QueueItem) {
+  if (Array.isArray(item.template_data)) return item.template_data.map(String);
   try {
     const values = JSON.parse(item.template_data || '[]');
     return Array.isArray(values) ? values.map(String) : [];
@@ -123,7 +128,7 @@ function labelMarkup(item: QueueItem, copy: number) {
   if (kind === 'lotte') return `<article class="label lotte" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',11.5,6.5,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.5,3.9,28)}pt">${first}</div></article>`;
   if (kind === 'export') return `<article class="label export" data-copy="${copy}"><div class="export-brand">${first}</div><div class="export-title">${second}</div><div class="export-code">${third}</div></article>`;
   if (kind === 'dutyfree') return `<article class="label dutyfree" data-copy="${copy}"><div class="dutyfree-title">${first}</div></article>`;
-  if (item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand">[miyansol]&nbsp; ${escapeHtml(values[0] || '')}</div><div class="standard-title">${escapeHtml(values[1] || item.product_name)}</div><div class="standard-bars">${barcodeSvg(item.barcode || '',{format:'CODE128',fontSize:15,height:62,width:1.7})}</div></article>`;
+  if (item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand">[miyansol]&nbsp; ${escapeHtml(values[0] || '')}</div><div class="standard-title">${escapeHtml(values[1] || item.product_name)}</div><div class="standard-bars">${barcodeSvg(item.barcode || '',{format:'CODE128',fontSize:18,height:50,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
   return `<article class="label standard" data-copy="${copy}"><div class="standard-brand">[miyansol]</div><div class="standard-title">${name}</div><div class="standard-bars">${barcodeSvg(item.barcode || '')}</div></article>`;
 }
 
@@ -135,7 +140,8 @@ function printQueueDocument(queue: QueueItem[]) {
   popup.document.open();
   popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>MIYANSOL 라벨 일괄출력</title><style>
     *{box-sizing:border-box}html,body{margin:0;background:#eee;font-family:Arial,'Malgun Gothic',sans-serif}.label{position:relative;width:40mm;height:20mm;padding:.35mm .25mm;background:#fff;color:#000;overflow:hidden;break-after:page;page-break-after:always;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.label:last-child{break-after:auto;page-break-after:auto}.label>div{width:100%;white-space:nowrap;overflow:hidden;text-overflow:clip}.no-barcode{font-size:5pt}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.shilla{justify-content:flex-start;padding:.15mm .25mm 0}.shilla-code{height:3.9mm;font-weight:700;line-height:3.9mm;letter-spacing:-.12mm}.shilla-title{height:2.7mm;font-weight:500;line-height:2.7mm;letter-spacing:-.14mm}.shilla-bars{height:13.1mm;width:100%;overflow:visible}.shilla-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.plain-code,.plain-title{padding:0;line-height:1.08}.plain-code{font-weight:700}.lotte{gap:2.3mm}.lotte .plain-title{font-weight:700;letter-spacing:-.13mm}.shinsegae{gap:2.1mm}.shinsegae .plain-title{font-weight:500;letter-spacing:-.12mm}.export{gap:1.25mm}.export-brand{font-size:9.4pt;font-weight:700}.export-title{font-size:5.4pt;font-weight:700;letter-spacing:-.12mm}.export-code{font-size:9.2pt;font-weight:700}.dutyfree-title{font-size:7.1pt;line-height:1;letter-spacing:-.12mm}.standard-brand{font-size:7.3pt;font-weight:700}.standard-title{font-size:5.5pt;font-weight:700;letter-spacing:-.12mm}.standard-bars{height:10.8mm;width:100%}.standard-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}@media screen{body{padding:10mm}.label{margin:0 auto 28mm;box-shadow:0 2px 12px #0002;transform:scale(2);transform-origin:top center}}@media print{html,body{background:#fff}.label{margin:0;box-shadow:none}@page{size:40mm 20mm;margin:0}}
-    .retail{padding:.25mm .55mm .15mm}.retail-title{height:3.5mm;line-height:3.5mm}.retail-price{height:3mm;line-height:3mm}.retail-bars{height:12.15mm;padding:0 .65mm .65mm;overflow:hidden}.retail-bars svg{overflow:visible}.lotte{padding-left:.08mm;padding-right:.08mm}.lotte .plain-title{width:100%;max-width:none;letter-spacing:-.18mm}.sellmate{justify-content:flex-start;padding:.35mm .8mm .2mm}.sellmate .standard-brand{height:3.8mm;line-height:3.8mm;font-size:7.3pt}.sellmate .standard-title{height:2.8mm;line-height:2.8mm;font-size:5.5pt}.sellmate .standard-bars{height:12.5mm;padding:0 .35mm .35mm}
+    .retail{padding:.25mm .55mm .15mm}.retail-title{height:3.5mm;line-height:3.5mm}.retail-price{height:3mm;line-height:3mm}.retail-bars{height:12.15mm;padding:0 .65mm .65mm;overflow:hidden}.retail-bars svg{overflow:visible}.lotte{padding-left:.08mm;padding-right:.08mm}.lotte .plain-title{width:100%;max-width:none;letter-spacing:-.18mm}.sellmate{justify-content:flex-start;padding:.35mm 1.75mm 1.1mm;font-family:Arial,'Malgun Gothic',sans-serif}.sellmate .standard-brand{height:3.45mm;line-height:3.45mm;font-size:8.05pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:3.65mm;line-height:3.65mm;font-size:7.15pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:10.2mm;padding:0 .25mm;overflow:hidden}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.08mm;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}
+    @media screen{.label.sellmate{width:377px;height:194px;transform:none;padding:5px 18px 11px;margin:0 auto 20px}.sellmate .standard-brand{height:34px;line-height:34px;font-size:33px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:36px;line-height:36px;font-size:32px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:91px;padding:0 3px}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.6px;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}}
   </style></head><body>${pages}<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
   popup.document.close();
   return true;
@@ -156,7 +162,10 @@ export default function LabelOutput() {
   useEffect(() => { void loadVendors(); }, []);
   useEffect(() => { fetch(`/api/labels?vendor=${encodeURIComponent(vendor)}&search=${encodeURIComponent(search)}`).then(r => r.json()).then(setLabels); }, [vendor, search]);
 
-  const majors = useMemo(() => categoryOrder.filter(value => labels.some(label => majorCategory(label) === value)), [labels]);
+  const majors = useMemo(() => {
+    const available = new Set<string>(labels.map(majorCategory));
+    return [...categoryOrder.filter(value => available.has(value)), ...[...available].filter(value => !categoryOrder.includes(value)).sort((a,b)=>a.localeCompare(b,'ko-KR'))];
+  }, [labels]);
   const products = useMemo(() => {const unique=new Map<string,string>();for(const label of labels.filter(label => !major || majorCategory(label) === major))unique.set(productKey(label),displayProductName(label));return [...unique].map(([key,name])=>({key,name})).sort((a,b)=>a.name.localeCompare(b.name,'ko-KR',{numeric:true}))}, [labels, major]);
   const results = useMemo(() => labels.filter(label => (!major || majorCategory(label) === major) && (!product || productKey(label) === product)).sort((a,b) => displayProductName(a).localeCompare(displayProductName(b),'ko-KR',{numeric:true}) || a.category.localeCompare(b.category,'ko-KR',{numeric:true})), [labels, major, product]);
   const samplePath = vendorSamples[vendor];
