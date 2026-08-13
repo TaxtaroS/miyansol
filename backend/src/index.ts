@@ -618,7 +618,7 @@ app.get("/api/labels", async (req, res) => {
   res.json(
     await db
       .prepare(
-        `SELECT l.id,l.vendor,l.category,l.product_name,l.barcode,l.template_data,l.product_id,p.image_path FROM label_templates l LEFT JOIN products p ON p.id=l.product_id WHERE (?='' OR l.vendor=?) AND (l.product_name LIKE ? OR l.barcode LIKE ?) ORDER BY l.vendor,l.category,l.product_name LIMIT 5000`,
+        `SELECT l.id,l.vendor,l.category,l.product_name,l.barcode,l.template_data,l.product_id,p.image_path,p.name dashboard_name,p.catalog_name FROM label_templates l LEFT JOIN products p ON p.id=l.product_id WHERE (?='' OR l.vendor=?) AND (l.product_name LIKE ? OR l.barcode LIKE ?) ORDER BY l.vendor,l.category,l.product_name LIMIT 5000`,
       )
       .all(vendor, vendor, search, search),
   );
