@@ -4,6 +4,7 @@ import { z } from "zod";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import multer from "multer";
@@ -19,12 +20,11 @@ const orderUpload = multer({
   storage: multer.memoryStorage(),
   limits: { files: 30, fileSize: 20 * 1024 * 1024 },
 });
-const orderFileDir = fileURLToPath(
-  new URL("../data/order-files/", import.meta.url),
-);
-const orderPreviewDir = fileURLToPath(
-  new URL("../data/order-previews/", import.meta.url),
-);
+const runtimeDataDir = process.env.VERCEL
+  ? path.join(os.tmpdir(), "miyansol-orders")
+  : fileURLToPath(new URL("../data/", import.meta.url));
+const orderFileDir = path.join(runtimeDataDir, "order-files");
+const orderPreviewDir = path.join(runtimeDataDir, "order-previews");
 fs.mkdirSync(orderFileDir, { recursive: true });
 fs.mkdirSync(orderPreviewDir, { recursive: true });
 const previewPython =
@@ -39,6 +39,10 @@ function createOrderPreview(file: Express.Multer.File) {
   const sourcePath = path.join(orderFileDir, `${key}${extension}`);
   const previewPath = path.join(orderPreviewDir, `${key}.pdf`);
   fs.writeFileSync(sourcePath, file.buffer);
+  if (extension === ".pdf") {
+    fs.writeFileSync(previewPath, file.buffer);
+    return { sourcePath, previewPath };
+  }
   const result = spawnSync(
     previewPython,
     [previewScript, sourcePath, previewPath],
