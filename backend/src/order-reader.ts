@@ -60,24 +60,23 @@ async function readPdfWithPaperMate(buffer:Buffer,filename:string){
 
   const scannedPages=(result.pages||[]).filter(page=>page.image_base64);
   if(!scannedPages.length)return {rows:[],raw};
-  const worker=await createWorker('kor+eng');
-  try{
-    await worker.setParameters({
-      tessedit_pageseg_mode:PSM.AUTO,
-      preserve_interword_spaces:'1',
-      user_defined_dpi:'300',
-    });
-    const pageTexts:string[]=[];
-    for(const page of scannedPages){
-      const image=Buffer.from(page.image_base64!,'base64');
-      const recognized=await worker.recognize(image);
-      if(recognized.data.text)pageTexts.push(recognized.data.text);
-    }
-    const ocrRaw=pageTexts.join('\n');
-    return {rows:rowsFromText(ocrRaw),raw:[raw,ocrRaw].filter(Boolean).join('\n')};
-  }finally{
-    await worker.terminate();
+  // Reuse the loaded Korean/English model. Creating it for every PDF was the
+  // main source of latency on serverless cold starts.
+  const worker=await getImageWorker();
+  await worker.setParameters({
+    tessedit_pageseg_mode:PSM.SPARSE_TEXT,
+    preserve_interword_spaces:'1',
+    user_defined_dpi:'300',
+  });
+  const pageTexts:string[]=[];
+  for(const page of scannedPages){
+    const source=Buffer.from(page.image_base64!,'base64');
+    const image=await sharp(source).grayscale().normalize().sharpen().png().toBuffer();
+    const recognized=await worker.recognize(image,{rotateAuto:true});
+    if(recognized.data.text)pageTexts.push(recognized.data.text);
   }
+  const ocrRaw=pageTexts.join('\n');
+  return {rows:rowsFromText(ocrRaw),raw:[raw,ocrRaw].filter(Boolean).join('\n')};
 }
 
 async function readPdf(buffer:Buffer,filename:string){
