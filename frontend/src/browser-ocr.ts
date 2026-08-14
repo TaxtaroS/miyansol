@@ -48,13 +48,50 @@ async function prepareImage(file: File, rotation: 0 | 90 | 270) {
   }
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.putImageData(image, 0, 0);
-  return canvas;
+
+  // Remove the large blank margins common in photographed order sheets.
+  const rowInk = new Uint32Array(canvas.height);
+  const columnInk = new Uint32Array(canvas.width);
+  for (let y = 0; y < canvas.height; y += 2) {
+    for (let x = 0; x < canvas.width; x += 2) {
+      const value = image.data[(y * canvas.width + x) * 4];
+      if (value < 185) {
+        rowInk[y] += 1;
+        columnInk[x] += 1;
+      }
+    }
+  }
+  const activeRows = [...rowInk.keys()].filter((y) => rowInk[y] > canvas.width * 0.004);
+  const activeColumns = [...columnInk.keys()].filter((x) => columnInk[x] > canvas.height * 0.003);
+  if (activeRows.length < 2 || activeColumns.length < 2) return canvas;
+  const marginX = Math.round(canvas.width * 0.025);
+  const marginY = Math.round(canvas.height * 0.025);
+  const left = Math.max(0, activeColumns[0] - marginX);
+  const right = Math.min(canvas.width, activeColumns.at(-1)! + marginX);
+  const top = Math.max(0, activeRows[0] - marginY);
+  const bottom = Math.min(canvas.height, activeRows.at(-1)! + marginY);
+  const cropWidth = right - left;
+  const cropHeight = bottom - top;
+  if (cropWidth < canvas.width * 0.35 || cropHeight < canvas.height * 0.2) return canvas;
+  const cropScale = Math.min(4, 3000 / Math.max(cropWidth, cropHeight));
+  const cropped = document.createElement("canvas");
+  cropped.width = Math.round(cropWidth * cropScale);
+  cropped.height = Math.round(cropHeight * cropScale);
+  const croppedContext = cropped.getContext("2d");
+  if (!croppedContext) return canvas;
+  croppedContext.imageSmoothingEnabled = true;
+  croppedContext.imageSmoothingQuality = "high";
+  croppedContext.drawImage(canvas, left, top, cropWidth, cropHeight, 0, 0, cropped.width, cropped.height);
+  return cropped;
 }
 
 function textScore(text: string, confidence: number) {
   const useful = text.replace(/[^0-9A-Za-z가-힣]/g, "").length;
   const rows = text.split(/\r?\n/).filter((line) => line.trim().length > 2).length;
-  return useful + rows * 8 + confidence;
+  const brands = (text.match(/MIYANSOL/gi) || []).length;
+  const longNumbers = (text.match(/\b\d{8,14}\b/g) || []).length;
+  const productCodes = (text.match(/\b[A-Z]{2,}[A-Z0-9-]*\d[A-Z0-9-]*\b/g) || []).length;
+  return useful + rows * 8 + confidence + brands * 500 + longNumbers * 80 + productCodes * 60;
 }
 
 export async function readOrderImage(file: File, onProgress: (progress: number) => void) {
