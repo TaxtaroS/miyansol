@@ -3,6 +3,7 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+import base64
 import fitz
 import re
 
@@ -39,13 +40,20 @@ async def extract_pdf(file: UploadFile = File(...)):
         with fitz.open(stream=content, filetype="pdf") as document:
             for page_number, page in enumerate(document, start=1):
                 text = page.get_text("text") or ""
-                pages.append(
-                    {
-                        "page_number": page_number,
-                        "source_label": f"Page {page_number}",
-                        "text": text,
-                    }
-                )
+                page_data = {
+                    "page_number": page_number,
+                    "source_label": f"Page {page_number}",
+                    "text": text,
+                }
+                # Scanned order sheets have no selectable text. Render those pages
+                # here with PyMuPDF so the Node service never needs browser PDF APIs.
+                if len(text.strip()) < 20 and page_number <= 20:
+                    matrix = fitz.Matrix(2.2, 2.2)
+                    pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csGRAY, alpha=False)
+                    page_data["image_base64"] = base64.b64encode(
+                        pixmap.tobytes("png")
+                    ).decode("ascii")
+                pages.append(page_data)
         return {
             "engine": "papemate-pymupdf",
             "pages": pages,

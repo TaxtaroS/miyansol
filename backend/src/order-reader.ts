@@ -53,14 +53,38 @@ async function readPdfWithPaperMate(buffer:Buffer,filename:string){
   const response=await fetch(`${baseUrl}/document-api/extract-pdf`,{method:'POST',body,signal:AbortSignal.timeout(30000)});
   const contentType=response.headers.get('content-type')||'';
   if(!response.ok||!contentType.includes('application/json'))return null;
-  const result=await response.json() as {text?:string};
+  const result=await response.json() as {text?:string;pages?:Array<{text?:string;image_base64?:string}>};
   const raw=result.text||'';
-  return {rows:rowsFromText(raw),raw};
+  const textRows=rowsFromText(raw);
+  if(textRows.length)return {rows:textRows,raw};
+
+  const scannedPages=(result.pages||[]).filter(page=>page.image_base64);
+  if(!scannedPages.length)return {rows:[],raw};
+  const worker=await createWorker('kor+eng');
+  try{
+    await worker.setParameters({
+      tessedit_pageseg_mode:PSM.AUTO,
+      preserve_interword_spaces:'1',
+      user_defined_dpi:'300',
+    });
+    const pageTexts:string[]=[];
+    for(const page of scannedPages){
+      const image=Buffer.from(page.image_base64!,'base64');
+      const recognized=await worker.recognize(image);
+      if(recognized.data.text)pageTexts.push(recognized.data.text);
+    }
+    const ocrRaw=pageTexts.join('\n');
+    return {rows:rowsFromText(ocrRaw),raw:[raw,ocrRaw].filter(Boolean).join('\n')};
+  }finally{
+    await worker.terminate();
+  }
 }
 
 async function readPdf(buffer:Buffer,filename:string){
   const paperMate=await readPdfWithPaperMate(buffer,filename);
-  if(paperMate?.rows.length)return paperMate;
+  // On Vercel the PyMuPDF worker handles both selectable and scanned PDFs.
+  // Returning even an empty analysis prevents pdfjs from requiring DOMMatrix.
+  if(paperMate)return paperMate;
   const {PDFParse}=await import('pdf-parse');
   const parser=new PDFParse({data:buffer});
   let worker:Awaited<ReturnType<typeof createWorker>>|null=null;
@@ -80,7 +104,7 @@ async function readPdf(buffer:Buffer,filename:string){
       if(recognized.data.text)pageTexts.push(recognized.data.text);
     }
     const ocrRaw=pageTexts.join('\n');
-    return {rows:rowsFromText(ocrRaw),raw:[paperMate?.raw,textRaw,ocrRaw].filter(Boolean).join('\n')};
+    return {rows:rowsFromText(ocrRaw),raw:[textRaw,ocrRaw].filter(Boolean).join('\n')};
   }finally{
     if(worker)await worker.terminate();
     await parser.destroy();
