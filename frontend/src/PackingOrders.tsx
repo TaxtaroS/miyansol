@@ -320,8 +320,8 @@ export default function PackingOrders({
       try{
         const text=await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
         setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text,progress:1,status:"ready"}:row));
-      }catch{
-        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,status:"error"}:row));
+      }catch(error){
+        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text:error instanceof Error?error.message:"사진에서 문자를 찾지 못했습니다.",status:"error"}:row));
       }
     }
   };
