@@ -496,11 +496,14 @@ export default function PackingOrders({
             {busy ? "문서 분석 중" : "주문서 분석하기"}
           </button>
         </form>
-        {imageOcr.length>0&&<div className="image-ocr-list">
+        {imageOcr.length>0&&<div className="image-pdf-section">
+          <div className="image-pdf-heading"><div><h3>변환된 PDF 주문서</h3><p>사진의 표와 순서를 그대로 유지한 PDF입니다.</p></div></div>
+          <div className="image-ocr-list">
           {imageOcr.map(row=><section className="image-ocr-card" key={row.name}>
-            <div className="image-ocr-preview"><iframe src={row.url} title={`${row.name} PDF 미리보기`}/><strong>{row.name}</strong></div>
+            <div className="image-ocr-preview"><iframe src={row.url} title={`${row.name} PDF 미리보기`}/><div className="image-pdf-file"><strong>{row.name}</strong><a className="primary" href={row.url} target="_blank" rel="noreferrer">PDF 크게 열기</a></div></div>
             <div className="image-analysis-status"><strong>PDF 변환 완료</strong><span>{row.status==="reading"?`상품 문자 분석 중 ${Math.round(row.progress*100)}%`:row.status==="ready"?"자동 분석 완료":"자동 분석이 부족합니다."}</span><small>PDF에서 원본 주문서를 확인하세요. 빠지거나 잘못 읽힌 품목은 아래 수동 출고 입력에서 추가할 수 있습니다.</small></div>
           </section>)}
+          </div>
         </div>}
         {!vendors.length && (
           <div className="notice">
