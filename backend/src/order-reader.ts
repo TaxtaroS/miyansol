@@ -45,11 +45,14 @@ async function readExcel(buffer:Buffer){
 }
 
 async function readPdfWithPaperMate(buffer:Buffer,filename:string){
-  if(!process.env.VERCEL_URL)return null;
+  const host=process.env.DOCUMENT_WORKER_HOST||process.env.VERCEL_PROJECT_PRODUCTION_URL||process.env.VERCEL_URL;
+  if(!host)return null;
   const body=new FormData();
   body.append('file',new Blob([Uint8Array.from(buffer)]),filename||'order.pdf');
-  const response=await fetch(`https://${process.env.VERCEL_URL}/document-api/extract-pdf`,{method:'POST',body,signal:AbortSignal.timeout(30000)});
-  if(!response.ok)throw new Error(`PaperMate PDF 분석 실패 (${response.status})`);
+  const baseUrl=host.startsWith('http')?host:`https://${host}`;
+  const response=await fetch(`${baseUrl}/document-api/extract-pdf`,{method:'POST',body,signal:AbortSignal.timeout(30000)});
+  const contentType=response.headers.get('content-type')||'';
+  if(!response.ok||!contentType.includes('application/json'))return null;
   const result=await response.json() as {text?:string};
   const raw=result.text||'';
   return {rows:rowsFromText(raw),raw};
@@ -57,7 +60,7 @@ async function readPdfWithPaperMate(buffer:Buffer,filename:string){
 
 async function readPdf(buffer:Buffer,filename:string){
   const paperMate=await readPdfWithPaperMate(buffer,filename);
-  if(paperMate)return paperMate;
+  if(paperMate?.rows.length)return paperMate;
   const {PDFParse}=await import('pdf-parse');
   const parser=new PDFParse({data:buffer});
   let worker:Awaited<ReturnType<typeof createWorker>>|null=null;
@@ -77,7 +80,7 @@ async function readPdf(buffer:Buffer,filename:string){
       if(recognized.data.text)pageTexts.push(recognized.data.text);
     }
     const ocrRaw=pageTexts.join('\n');
-    return {rows:rowsFromText(ocrRaw),raw:[textRaw,ocrRaw].filter(Boolean).join('\n')};
+    return {rows:rowsFromText(ocrRaw),raw:[paperMate?.raw,textRaw,ocrRaw].filter(Boolean).join('\n')};
   }finally{
     if(worker)await worker.terminate();
     await parser.destroy();

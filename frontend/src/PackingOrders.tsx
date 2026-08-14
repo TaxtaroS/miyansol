@@ -374,10 +374,12 @@ export default function PackingOrders({
         method: "POST",
         body,
       });
-      const data = await response.json();
+      const responseText=await response.text();
+      let data:{message?:string;imports?:Array<unknown>}={};
+      try{data=JSON.parse(responseText)}catch{throw new Error(`주문서 서버 응답 오류 (${response.status}). 잠시 후 다시 시도해 주세요.`)}
       if (!response.ok) throw new Error(data.message);
       setMessage(
-        `${data.imports.length}개 주문서를 분석했습니다. 확인 필요 품목을 검토해 주세요.`,
+        `${data.imports?.length||0}개 주문서를 등록했습니다. 확인 필요 품목을 검토해 주세요.`,
       );
       setFiles([]);
       imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
