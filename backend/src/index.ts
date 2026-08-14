@@ -500,7 +500,7 @@ app.get("/api/products", async (_req, res) =>
   res.json(
     await db
       .prepare(
-        `SELECT p.*, COALESCE(f.quantity,0) factoryStock, COALESCE(k.quantity,0) pickingStock, COALESCE(f.quantity,0)+COALESCE(k.quantity,0) totalStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1 ORDER BY p.id DESC`,
+        `SELECT p.*, COALESCE(f.quantity,0) "factoryStock", COALESCE(k.quantity,0) "pickingStock", COALESCE(f.quantity,0)+COALESCE(k.quantity,0) "totalStock" FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1 ORDER BY p.id DESC`,
       )
       .all(),
   ),
@@ -508,7 +508,7 @@ app.get("/api/products", async (_req, res) =>
 app.get("/api/products/barcode/:barcode", async (req, res) => {
   const product = await db
     .prepare(
-      `SELECT p.*, COALESCE(f.quantity,0) factoryStock, COALESCE(k.quantity,0) pickingStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.barcode=? AND p.active=1`,
+      `SELECT p.*, COALESCE(f.quantity,0) "factoryStock", COALESCE(k.quantity,0) "pickingStock" FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.barcode=? AND p.active=1`,
     )
     .get(req.params.barcode);
   if (!product)
@@ -545,7 +545,7 @@ app.get("/api/inventory", async (_req, res) =>
   res.json(
     await db
       .prepare(
-        `SELECT p.id,p.sku,p.name,p.color,p.barcode,p.image_path,p.catalog_name,COALESCE(f.quantity,0) factoryStock,COALESCE(k.quantity,0) pickingStock,COALESCE(f.quantity,0)+COALESCE(k.quantity,0) totalStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1 ORDER BY p.name,p.color`,
+        `SELECT p.id,p.sku,p.name,p.color,p.barcode,p.image_path,p.catalog_name,COALESCE(f.quantity,0) "factoryStock",COALESCE(k.quantity,0) "pickingStock",COALESCE(f.quantity,0)+COALESCE(k.quantity,0) "totalStock" FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1 ORDER BY p.name,p.color`,
       )
       .all(),
   ),
@@ -576,7 +576,7 @@ app.get("/api/dashboard/outbound-ranking", async (req, res) => {
 app.get("/api/dashboard-inventory", async (_req, res) => {
   const allRows = (await db
     .prepare(
-      `SELECT p.id,p.name,p.image_path,p.catalog_name,COALESCE(f.quantity,0) factoryStock,COALESCE(k.quantity,0) pickingStock,COALESCE(f.quantity,0)+COALESCE(k.quantity,0) totalStock FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1`,
+      `SELECT p.id,p.name,p.image_path,p.catalog_name,COALESCE(f.quantity,0) "factoryStock",COALESCE(k.quantity,0) "pickingStock",COALESCE(f.quantity,0)+COALESCE(k.quantity,0) "totalStock" FROM products p LEFT JOIN inventory f ON f.product_id=p.id AND f.location='FACTORY' LEFT JOIN inventory k ON k.product_id=p.id AND k.location='PICKING' WHERE p.active=1`,
     )
     .all()) as Array<Record<string, unknown>>;
   const names = JSON.parse(
