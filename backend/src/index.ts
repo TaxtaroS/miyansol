@@ -871,7 +871,7 @@ app.get("/api/order-imports", async (_req, res) => {
       JOIN order_imports o ON o.id=i.import_id
       LEFT JOIN products p ON p.id=i.matched_product_id
       WHERE o.status!='COMMITTED'
-      GROUP BY CASE WHEN i.matched_product_id IS NULL THEN 'u:'||i.source_name ELSE 'p:'||i.matched_product_id END
+      GROUP BY i.matched_product_id,p.name,p.sku,i.source_name
     )
     SELECT d.*,COALESCE(k.quantity,0) picking_stock,COALESCE(f.quantity,0) factory_stock,
       GREATEST(d.quantity-COALESCE(k.quantity,0),0) packing_shortage,

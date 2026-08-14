@@ -286,11 +286,21 @@ export default function PackingOrders({
   const inputRef = useRef<HTMLInputElement>(null);
   const load = () =>
     fetch("/api/order-imports")
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.message || "출고 목록을 불러오지 못했습니다.");
+        return data;
+      })
       .then((data) => {
-        setImports(data.imports);
-        setItems(data.items);
-        setSummary(data.summary);
+        setImports(Array.isArray(data.imports) ? data.imports : []);
+        setItems(Array.isArray(data.items) ? data.items : []);
+        setSummary(Array.isArray(data.summary) ? data.summary : []);
+      })
+      .catch((error) => {
+        setImports([]);
+        setItems([]);
+        setSummary([]);
+        setMessage(error instanceof Error ? error.message : "출고 목록을 불러오지 못했습니다.");
       });
   useEffect(() => {
     void load();
