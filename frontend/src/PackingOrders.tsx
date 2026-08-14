@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { majorCategory, majorOrder, subCategory } from "./product-categories";
 import { readOrderImage } from "./browser-ocr";
+import { imageToPdfUrl } from "./image-pdf";
 import "./OrderPreview.css";
 
 type Product = {
@@ -315,13 +316,14 @@ export default function PackingOrders({
     imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
     setFiles(selected);
     const images=selected.filter(file=>file.type.startsWith("image/"));
-    setImageOcr(images.map(file=>({name:file.name,url:URL.createObjectURL(file),text:"",progress:0,status:"reading"})));
+    const previews=await Promise.all(images.map(async file=>({name:file.name,url:await imageToPdfUrl(file),text:"",progress:0,status:"reading" as const})));
+    setImageOcr(previews);
     for(const file of images){
       try{
         const text=await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
         setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text,progress:1,status:"ready"}:row));
-      }catch(error){
-        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text:error instanceof Error?error.message:"사진에서 문자를 찾지 못했습니다.",status:"error"}:row));
+      }catch{
+        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text:"",status:"error"}:row));
       }
     }
   };
@@ -496,10 +498,8 @@ export default function PackingOrders({
         </form>
         {imageOcr.length>0&&<div className="image-ocr-list">
           {imageOcr.map(row=><section className="image-ocr-card" key={row.name}>
-            <div className="image-ocr-preview"><img src={row.url} alt={`${row.name} 주문서 미리보기`}/><strong>{row.name}</strong></div>
-            <label><span>사진에서 읽은 문자 · {row.status==="reading"?`${Math.round(row.progress*100)}%`:row.status==="ready"?"완료":"자동 인식 실패"}</span>
-              <textarea value={row.text} placeholder="추출된 문자가 여기에 표시됩니다. 잘못 읽은 부분은 직접 수정할 수 있습니다." onChange={event=>setImageOcr(current=>current.map(item=>item.name===row.name?{...item,text:event.target.value}:item))}/>
-            </label>
+            <div className="image-ocr-preview"><iframe src={row.url} title={`${row.name} PDF 미리보기`}/><strong>{row.name}</strong></div>
+            <div className="image-analysis-status"><strong>PDF 변환 완료</strong><span>{row.status==="reading"?`상품 문자 분석 중 ${Math.round(row.progress*100)}%`:row.status==="ready"?"자동 분석 완료":"자동 분석이 부족합니다."}</span><small>PDF에서 원본 주문서를 확인하세요. 빠지거나 잘못 읽힌 품목은 아래 수동 출고 입력에서 추가할 수 있습니다.</small></div>
           </section>)}
         </div>}
         {!vendors.length && (

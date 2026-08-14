@@ -732,7 +732,7 @@ app.post(
       let browserOcr = new Map<string, string>();
       try {
         const values = JSON.parse(String(req.body.ocrTexts || "[]")) as Array<{name?:string;text?:string}>;
-        browserOcr = new Map(values.filter(row=>row.name&&row.text?.trim()).map(row=>[String(row.name),String(row.text)]));
+        browserOcr = new Map(values.filter(row=>row.name).map(row=>[String(row.name),String(row.text||"")]));
       } catch {
         throw new Error("사진에서 추출한 문자 형식이 올바르지 않습니다.");
       }

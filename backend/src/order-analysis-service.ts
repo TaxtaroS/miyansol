@@ -10,8 +10,9 @@ export type AnalyzedOrderItem={sourceName:string;quantity:number;productId:numbe
  * 3) 자동 확정하지 못한 항목은 검토 대상으로 반환
  */
 export async function analyzeOrderFile(file:{buffer:Buffer;mimetype:string;originalname:string},products:AnalysisProduct[],browserOcrText?:string){
-  const suppliedText=browserOcrText?.trim();
-  const extracted=suppliedText?{raw:suppliedText,rows:rowsFromText(suppliedText)}:await readOrderFile(file);
+  const supplied=browserOcrText!==undefined;
+  const suppliedText=browserOcrText?.trim()||'';
+  const extracted=supplied?{raw:suppliedText,rows:rowsFromText(suppliedText)}:await readOrderFile(file);
   const items:AnalyzedOrderItem[]=extracted.rows.map(row=>{
     const matched=matchProduct(row.name,products);
     return {sourceName:row.name,quantity:row.quantity,productId:matched?.id??null,confidence:matched?.score??0};
@@ -22,6 +23,6 @@ export async function analyzeOrderFile(file:{buffer:Buffer;mimetype:string;origi
     extractedCount:items.length,
     unmatchedCount:items.filter(item=>item.productId===null).length,
     status:items.length>0&&items.every(item=>item.productId!==null)?'READY' as const:'REVIEW' as const,
-    engine:suppliedText?'browser-ocr+alias-matcher':'table-ocr+alias-matcher'
+    engine:supplied?'browser-ocr+alias-matcher':'table-ocr+alias-matcher'
   };
 }
