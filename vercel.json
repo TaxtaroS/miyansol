@@ -8,6 +8,10 @@
     "backend": {
       "root": "backend",
       "entrypoint": "src/index.ts"
+    },
+    "document": {
+      "root": "document-worker",
+      "entrypoint": "app.py"
     }
   },
   "rewrites": [
@@ -16,6 +20,13 @@
       "destination": {
         "type": "service",
         "service": "backend"
+      }
+    },
+    {
+      "source": "/document-api/(.*)?",
+      "destination": {
+        "type": "service",
+        "service": "document"
       }
     },
     {

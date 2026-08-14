@@ -6,6 +6,12 @@ import {readImageWithPaddle} from './paddle-ocr.js';
 
 export type ParsedOrderRow={name:string;quantity:number};
 
+let imageWorkerPromise:ReturnType<typeof createWorker>|null=null;
+function getImageWorker(){
+  imageWorkerPromise ||= createWorker('kor+eng');
+  return imageWorkerPromise;
+}
+
 const productHeaders=/상품명|품명|제품명|상품|품목|옵션|product|item/i;
 const quantityHeaders=/주문수량|출고수량|수량|qty|quantity|count/i;
 const ignored=/^(합계|총계|총\s|total|수량|상품명|품명|제품명|순번|번호)/i;
@@ -38,7 +44,20 @@ async function readExcel(buffer:Buffer){
   });return {rows:mergeRows(rows),raw};
 }
 
-async function readPdf(buffer:Buffer){
+async function readPdfWithPaperMate(buffer:Buffer,filename:string){
+  if(!process.env.VERCEL_URL)return null;
+  const body=new FormData();
+  body.append('file',new Blob([Uint8Array.from(buffer)]),filename||'order.pdf');
+  const response=await fetch(`https://${process.env.VERCEL_URL}/document-api/extract-pdf`,{method:'POST',body,signal:AbortSignal.timeout(30000)});
+  if(!response.ok)throw new Error(`PaperMate PDF 분석 실패 (${response.status})`);
+  const result=await response.json() as {text?:string};
+  const raw=result.text||'';
+  return {rows:rowsFromText(raw),raw};
+}
+
+async function readPdf(buffer:Buffer,filename:string){
+  const paperMate=await readPdfWithPaperMate(buffer,filename);
+  if(paperMate)return paperMate;
   const {PDFParse}=await import('pdf-parse');
   const parser=new PDFParse({data:buffer});
   let worker:Awaited<ReturnType<typeof createWorker>>|null=null;
@@ -65,12 +84,12 @@ async function readPdf(buffer:Buffer){
   }
 }
 async function enhancedImage(buffer:Buffer){const metadata=await sharp(buffer).metadata();const width=metadata.width||1200,height=metadata.height||1600;return sharp(buffer).extract({left:0,top:Math.round(height*.1),width,height:Math.max(1,Math.round(height*.58))}).resize({width:Math.max(1800,width*3),withoutEnlargement:false}).grayscale().normalize().sharpen().toBuffer()}
-async function readImage(buffer:Buffer,extension='jpg'){const paddle=readImageWithPaddle(buffer,extension);if(paddle?.rows.length)return {rows:paddle.rows.map(row=>({name:row.name,quantity:row.quantity})),raw:paddle.raw};const worker=await createWorker('kor+eng');try{await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,preserve_interword_spaces:'1',user_defined_dpi:'300'});const prepared=await enhancedImage(buffer);const result=await worker.recognize(prepared);const raw=result.data.text||'';return {rows:rowsFromText(raw),raw}}finally{await worker.terminate()}}
+async function readImage(buffer:Buffer,extension='jpg'){const paddle=readImageWithPaddle(buffer,extension);if(paddle?.rows.length)return {rows:paddle.rows.map(row=>({name:row.name,quantity:row.quantity})),raw:paddle.raw};const worker=await getImageWorker();await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,preserve_interword_spaces:'1',user_defined_dpi:'300'});const prepared=await enhancedImage(buffer);const result=await worker.recognize(prepared);const raw=result.data.text||'';return {rows:rowsFromText(raw),raw}}
 
 export async function readOrderFile(file:{buffer:Buffer;mimetype:string;originalname:string}){
   const extension=file.originalname.split('.').pop()?.toLowerCase();
   if(extension==='xlsx')return readExcel(file.buffer);
-  if(extension==='pdf'||file.mimetype==='application/pdf')return readPdf(file.buffer);
+  if(extension==='pdf'||file.mimetype==='application/pdf')return readPdf(file.buffer,file.originalname);
   if(['jpg','jpeg','png','webp','bmp'].includes(extension||'')||file.mimetype.startsWith('image/'))return readImage(file.buffer,extension||'jpg');
   throw new Error(`${file.originalname}: 지원하지 않는 파일 형식입니다.`);
 }
