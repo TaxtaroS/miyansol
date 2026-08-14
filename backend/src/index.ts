@@ -39,7 +39,7 @@ function createOrderPreview(file: Express.Multer.File) {
   const sourcePath = path.join(orderFileDir, `${key}${extension}`);
   const previewPath = path.join(orderPreviewDir, `${key}.pdf`);
   fs.writeFileSync(sourcePath, file.buffer);
-  if (extension === ".pdf") {
+  if (extension === ".pdf" || file.mimetype.startsWith("image/")) {
     fs.writeFileSync(previewPath, file.buffer);
     return { sourcePath, previewPath };
   }
@@ -741,7 +741,7 @@ app.post(
         aliases: string | null;
       }>;
       const insertImport = db.prepare(
-        "INSERT INTO order_imports(vendor,filename,file_type,status,raw_text,source_path,preview_pdf_path) VALUES(?,?,?,?,?,?,?)",
+        "INSERT INTO order_imports(vendor,filename,file_type,status,raw_text,source_path,preview_pdf_path,file_data) VALUES(?,?,?,?,?,?,?,?)",
       );
       const insertItem = db.prepare(
         "INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,?)",
@@ -761,6 +761,7 @@ app.post(
           analysis.rawText.slice(0, 100000),
           preview.sourcePath,
           preview.previewPath,
+          file.buffer,
         );
         const importId = Number(result.lastInsertRowid);
         for (const row of analysis.items)
@@ -896,13 +897,14 @@ app.get("/api/order-imports/:id/preview", async (req, res, next) => {
   try {
     const row = (await db
       .prepare(
-        "SELECT filename,file_type,preview_pdf_path FROM order_imports WHERE id=?",
+        "SELECT filename,file_type,preview_pdf_path,file_data FROM order_imports WHERE id=?",
       )
       .get(req.params.id)) as
       | {
           filename: string;
           file_type: string;
           preview_pdf_path: string;
+          file_data: Buffer | null;
         }
       | undefined;
     if (!row) throw new Error("주문서를 찾을 수 없습니다.");
@@ -910,6 +912,13 @@ app.get("/api/order-imports/:id/preview", async (req, res, next) => {
       return res
         .status(400)
         .json({ message: "수동 입력은 목록으로 확인해 주세요." });
+    if (
+      row.file_data &&
+      (row.file_type === "application/pdf" || row.file_type.startsWith("image/"))
+    ) {
+      res.type(row.file_type);
+      return res.send(row.file_data);
+    }
     if (!row.preview_pdf_path || !fs.existsSync(row.preview_pdf_path))
       return res.status(404).json({
         message: "이 주문서는 변경 이전 자료라 확인용 PDF가 없습니다.",

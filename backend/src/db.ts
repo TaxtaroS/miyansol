@@ -135,6 +135,7 @@ const orderImportColumns = db.prepare('PRAGMA table_info(order_imports)').all() 
 if (!orderImportColumns.some((column) => column.name === 'source_path')) db.exec("ALTER TABLE order_imports ADD COLUMN source_path TEXT NOT NULL DEFAULT ''");
 if (!orderImportColumns.some((column) => column.name === 'preview_pdf_path')) db.exec("ALTER TABLE order_imports ADD COLUMN preview_pdf_path TEXT NOT NULL DEFAULT ''");
 if (!orderImportColumns.some((column) => column.name === 'reviewed_at')) db.exec("ALTER TABLE order_imports ADD COLUMN reviewed_at TEXT");
+if (!orderImportColumns.some((column) => column.name === 'file_data')) db.exec("ALTER TABLE order_imports ADD COLUMN file_data BLOB");
 
 const productColumns = db.prepare('PRAGMA table_info(products)').all() as { name: string }[];
 if (!productColumns.some((column) => column.name === 'barcode')) {
