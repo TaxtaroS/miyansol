@@ -7,19 +7,23 @@ function readAsDataUrl(file: File) {
   });
 }
 
-export async function imageToPdfUrl(file: File) {
+export async function imageToPdf(file: File, rotation: 0 | 90 | 270 = 0) {
   const { jsPDF } = await import("jspdf");
   const bitmap = await createImageBitmap(file);
-  const landscape = bitmap.width > bitmap.height;
+  const rotated = rotation !== 0;
+  const imageWidth = rotated ? bitmap.height : bitmap.width;
+  const imageHeight = rotated ? bitmap.width : bitmap.height;
+  const landscape = imageWidth > imageHeight;
   const pdf = new jsPDF({ orientation: landscape ? "landscape" : "portrait", unit: "mm", format: "a4", compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 5;
-  const scale = Math.min((pageWidth - margin * 2) / bitmap.width, (pageHeight - margin * 2) / bitmap.height);
-  const width = bitmap.width * scale;
-  const height = bitmap.height * scale;
+  const scale = Math.min((pageWidth - margin * 2) / imageWidth, (pageHeight - margin * 2) / imageHeight);
+  const width = imageWidth * scale;
+  const height = imageHeight * scale;
   bitmap.close();
   const dataUrl = await readAsDataUrl(file);
-  pdf.addImage(dataUrl, file.type.includes("png") ? "PNG" : "JPEG", (pageWidth - width) / 2, (pageHeight - height) / 2, width, height, undefined, "FAST");
-  return URL.createObjectURL(pdf.output("blob"));
+  pdf.addImage(dataUrl, file.type.includes("png") ? "PNG" : "JPEG", (pageWidth - width) / 2, (pageHeight - height) / 2, width, height, undefined, "FAST", rotation);
+  const blob = pdf.output("blob");
+  return {blob,url:URL.createObjectURL(blob),name:file.name.replace(/\.[^.]+$/,"")+".pdf"};
 }

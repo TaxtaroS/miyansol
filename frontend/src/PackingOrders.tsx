@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { majorCategory, majorOrder, subCategory } from "./product-categories";
 import { readOrderImage } from "./browser-ocr";
-import { imageToPdfUrl } from "./image-pdf";
+import { imageToPdf } from "./image-pdf";
 import "./OrderPreview.css";
 
 type Product = {
@@ -24,7 +24,7 @@ type Product = {
   pickingStock: number;
 };
 type Vendor = { id: number; name: string };
-type ImageOcr = {name:string;url:string;text:string;progress:number;status:"reading"|"ready"|"error"};
+type ImageOcr = {name:string;pdfName:string;pdfBlob:Blob;url:string;text:string;progress:number;status:"reading"|"ready"|"error"};
 type ImportRow = {
   id: number;
   vendor: string;
@@ -316,12 +316,20 @@ export default function PackingOrders({
     imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
     setFiles(selected);
     const images=selected.filter(file=>file.type.startsWith("image/"));
-    const previews=await Promise.all(images.map(async file=>({name:file.name,url:await imageToPdfUrl(file),text:"",progress:0,status:"reading" as const})));
+    const previews=await Promise.all(images.map(async file=>{
+      const pdf=await imageToPdf(file);
+      return {name:file.name,pdfName:pdf.name,pdfBlob:pdf.blob,url:pdf.url,text:"",progress:0,status:"reading" as const};
+    }));
     setImageOcr(previews);
     for(const file of images){
       try{
-        const text=await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
-        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text,progress:1,status:"ready"}:row));
+        const recognized=await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
+        const correctedPdf=await imageToPdf(file,recognized.rotation);
+        setImageOcr(current=>current.map(row=>{
+          if(row.name!==file.name)return row;
+          URL.revokeObjectURL(row.url);
+          return {...row,pdfName:correctedPdf.name,pdfBlob:correctedPdf.blob,url:correctedPdf.url,text:recognized.text,progress:1,status:"ready"};
+        }));
       }catch{
         setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text:"",status:"error"}:row));
       }
@@ -348,8 +356,13 @@ export default function PackingOrders({
     );
     const body = new FormData();
     body.append("vendor", vendor.trim());
-    body.append("ocrTexts",JSON.stringify(imageOcr.map(({name,text})=>({name,text}))));
-    files.forEach((file) => body.append("files", file));
+    body.append("ocrTexts",JSON.stringify(imageOcr.map(({pdfName,text})=>({name:pdfName,text}))));
+    const pdfByImage=new Map(imageOcr.map(row=>[row.name,row]));
+    files.forEach((file) => {
+      const converted=pdfByImage.get(file.name);
+      if(converted)body.append("files",converted.pdfBlob,converted.pdfName);
+      else body.append("files",file);
+    });
     try {
       const response = await fetch("/api/order-imports", {
         method: "POST",

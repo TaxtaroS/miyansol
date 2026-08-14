@@ -101,7 +101,7 @@ export async function readOrderImage(file: File, onProgress: (progress: number) 
     preserve_interword_spaces: "1",
     user_defined_dpi: "300",
   });
-  let best = { text: "", score: -1 };
+  let best: { text: string; score: number; rotation: 0 | 90 | 270 } = { text: "", score: -1, rotation: 0 };
   const rotations: Array<0 | 90 | 270> = [0, 90, 270];
   try {
     for (let attempt = 0; attempt < rotations.length; attempt += 1) {
@@ -110,11 +110,11 @@ export async function readOrderImage(file: File, onProgress: (progress: number) 
       const result = await worker.recognize(canvas);
       const text = result.data.text.trim();
       const score = textScore(text, result.data.confidence || 0);
-      if (score > best.score) best = { text, score };
+      if (score > best.score) best = { text, score, rotation: rotations[attempt] };
     }
     onProgress(1);
     if (!best.text) throw new Error("사진에서 문자를 찾지 못했습니다.");
-    return best.text;
+    return { text: best.text, rotation: best.rotation };
   } finally {
     progressListener = null;
   }
