@@ -36,17 +36,6 @@ type ImportRow = {
   file_type: string;
   reviewed_at: string | null;
 };
-type Item = {
-  id: number;
-  import_id: number;
-  vendor: string;
-  filename: string;
-  source_name: string;
-  quantity: number;
-  matched_product_id: number | null;
-  matched_name: string | null;
-  confidence: number;
-};
 type Summary = {
   matched_product_id: number | null;
   name: string | null;
@@ -272,7 +261,6 @@ export default function PackingOrders({
   const [files, setFiles] = useState<File[]>([]);
   const [imageOcr, setImageOcr] = useState<ImageOcr[]>([]);
   const [imports, setImports] = useState<ImportRow[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -298,12 +286,10 @@ export default function PackingOrders({
       })
       .then((data) => {
         setImports(Array.isArray(data.imports) ? data.imports : []);
-        setItems(Array.isArray(data.items) ? data.items : []);
         setSummary(Array.isArray(data.summary) ? data.summary : []);
       })
       .catch((error) => {
         setImports([]);
-        setItems([]);
         setSummary([]);
         setMessage(error instanceof Error ? error.message : "출고 목록을 불러오지 못했습니다.");
       });
@@ -393,17 +379,6 @@ export default function PackingOrders({
     } finally {
       setBusy(false);
     }
-  };
-  const updateItem = async (item: Item, productId: number) => {
-    if (!productId) return;
-    const response = await fetch(`/api/order-import-items/${item.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ productId, quantity: item.quantity }),
-    });
-    const data = await response.json();
-    setMessage(response.ok ? "품목 매칭을 저장했습니다." : data.message);
-    if (response.ok) await load();
   };
   const remove = async (id: number) => {
     const response = await fetch(`/api/order-imports/${id}`, {
@@ -664,91 +639,75 @@ export default function PackingOrders({
           </div>
         </div>
       )}
-      <div className="order-two-columns">
-        <div className="panel">
-          <h2>품목 매칭 확인</h2>
-          <p>잘못 읽힌 품목은 실제 MIYANSOL 상품으로 변경하세요.</p>
-          <div className="order-match-list">
-            {items.map((item) => (
-              <div
-                className={
-                  item.matched_product_id
-                    ? "order-match-row"
-                    : "order-match-row unmatched"
-                }
-                key={item.id}
-              >
-                <div>
-                  <b>{item.source_name}</b>
-                  <small>
-                    {item.vendor} · {item.filename} · 주문 {item.quantity}개
-                  </small>
-                </div>
-                <select
-                  value={item.matched_product_id || ""}
-                  onChange={(event) =>
-                    void updateItem(item, Number(event.target.value))
-                  }
-                >
-                  <option value="">상품 선택 필요</option>
-                  {products.map((product) => (
-                    <option value={product.id} key={product.id}>
-                      {product.name} · 공장 {product.factoryStock} · 패킹{" "}
-                      {product.pickingStock}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="panel stock-compare-panel">
-          <h2>주문·재고·패킹 준비 현황</h2>
-          <p>여러 업체 주문을 합산하여 현재 패킹 가능 여부를 표시합니다.</p>
-          <div className="table order-summary">
-            <table>
-              <thead>
-                <tr>
-                  <th>상품</th>
-                  <th>주문</th>
-                  <th>패킹재고</th>
-                  <th>공장재고</th>
-                  <th>준비 상태</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.map((row, index) => (
-                  <tr key={`${row.matched_product_id}-${index}`}>
-                    <td>
-                      {row.name || "매칭 필요"}
-                      <small>{row.vendors}</small>
-                    </td>
-                    <td>
-                      <b>{row.quantity}</b>
-                    </td>
-                    <td>{row.picking_stock}</td>
-                    <td>{row.factory_stock}</td>
-                    <td>
-                      {row.stock_status === "READY" ? (
-                        <span className="stock-ready">출고 가능</span>
-                      ) : row.stock_status === "NEEDS_PACKING" ? (
-                        <span className="stock-packing">
-                          패킹 입고 {row.factory_transfer_needed}개 필요
-                        </span>
-                      ) : row.stock_status === "SHORTAGE" ? (
-                        <span className="stock-shortage">
-                          전체재고 {row.total_shortage}개 부족
-                        </span>
-                      ) : (
-                        <span className="stock-unmatched">품목 매칭 필요</span>
-                      )}
-                    </td>
-                  </tr>
+      <div className="panel stock-dashboard-panel">
+        <h2>주문·재고·패킹 준비 현황</h2>
+        <p>여러 업체 주문을 합산하여 대시보드 품목 순서로 표시합니다.</p>
+        {summary.length === 0 ? (
+          <div className="empty-queue">등록된 출고 대기 품목이 없습니다.</div>
+        ) : (
+          (() => {
+            const groups = new Map<string, Summary[]>();
+            for (const row of summary) {
+              const product = products.find(
+                (item) => item.id === row.matched_product_id,
+              );
+              const category = product ? majorCategory(product) : "매칭 필요";
+              groups.set(category, [...(groups.get(category) || []), row]);
+            }
+            const ordered = [...groups].sort(([a], [b]) => {
+              const ai = majorOrder.indexOf(a);
+              const bi = majorOrder.indexOf(b);
+              return (
+                (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) ||
+                a.localeCompare(b, "ko-KR")
+              );
+            });
+            return (
+              <div className="packing-stock-dashboard">
+                {ordered.map(([category, rows]) => (
+                  <section className="packing-stock-card" key={category}>
+                    <h3>
+                      {category}
+                      <small>{rows.length}품목</small>
+                    </h3>
+                    <div className="packing-stock-card-head">
+                      <span>품목</span><span>주문</span><span>패킹</span><span>공장</span>
+                    </div>
+                    {rows.map((row, index) => (
+                      <article key={`${row.matched_product_id}-${index}`}>
+                        <div className="packing-stock-name">
+                          <b>{row.name || "매칭 필요"}</b>
+                          <small>{row.vendors}</small>
+                        </div>
+                        <strong>{row.quantity}</strong>
+                        <span>{row.picking_stock}</span>
+                        <span>{row.factory_stock}</span>
+                        <div className="packing-stock-state">
+                          {row.stock_status === "READY" ? (
+                            <span className="stock-ready">출고 가능</span>
+                          ) : row.stock_status === "NEEDS_PACKING" ? (
+                            <span className="stock-packing">
+                              패킹 {row.factory_transfer_needed}개 필요
+                            </span>
+                          ) : row.stock_status === "SHORTAGE" ? (
+                            <span className="stock-shortage">
+                              재고 {row.total_shortage}개 부족
+                            </span>
+                          ) : (
+                            <span className="stock-unmatched">매칭 필요</span>
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                    <footer>
+                      주문 합계 <b>{rows.reduce((sum, row) => sum + row.quantity, 0)}개</b>
+                    </footer>
+                  </section>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </div>
+            );
+          })()
+        )}
       </div>
     </div>
   );
