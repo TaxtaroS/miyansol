@@ -729,6 +729,13 @@ app.post(
         throw new Error("등록된 출고 거래처를 선택해 주세요.");
       const files = (req.files || []) as Express.Multer.File[];
       if (!files.length) throw new Error("주문서 파일을 선택해 주세요.");
+      let browserOcr = new Map<string, string>();
+      try {
+        const values = JSON.parse(String(req.body.ocrTexts || "[]")) as Array<{name?:string;text?:string}>;
+        browserOcr = new Map(values.filter(row=>row.name&&row.text?.trim()).map(row=>[String(row.name),String(row.text)]));
+      } catch {
+        throw new Error("사진에서 추출한 문자 형식이 올바르지 않습니다.");
+      }
       const products = (await db
         .prepare(
           `SELECT p.id,p.name,p.catalog_name,p.sku,(SELECT STRING_AGG(value,'|||') FROM (SELECT a.alias value FROM product_aliases a WHERE a.product_id=p.id UNION ALL SELECT l.product_name FROM label_templates l WHERE l.product_id=p.id UNION ALL SELECT l.barcode FROM label_templates l WHERE l.product_id=p.id AND l.barcode IS NOT NULL UNION ALL SELECT j.value FROM label_templates l CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(l.template_data)='array' THEN l.template_data ELSE '[]'::jsonb END) j(value) WHERE l.product_id=p.id) alias_values) aliases FROM products p WHERE p.active=TRUE`,
@@ -752,7 +759,7 @@ app.post(
       const imports = [];
       for (const file of files) {
         const preview = createOrderPreview(file);
-        const analysis = await analyzeOrderFile(file, products);
+        const analysis = await analyzeOrderFile(file, products, browserOcr.get(file.originalname));
         const result = await insertImport.run(
           vendor,
           file.originalname,

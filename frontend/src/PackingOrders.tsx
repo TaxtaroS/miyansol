@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { majorCategory, majorOrder, subCategory } from "./product-categories";
+import { readOrderImage } from "./browser-ocr";
 import "./OrderPreview.css";
 
 type Product = {
@@ -22,6 +23,7 @@ type Product = {
   pickingStock: number;
 };
 type Vendor = { id: number; name: string };
+type ImageOcr = {name:string;url:string;text:string;progress:number;status:"reading"|"ready"|"error"};
 type ImportRow = {
   id: number;
   vendor: string;
@@ -267,6 +269,7 @@ export default function PackingOrders({
   const [vendor, setVendor] = useState("");
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  const [imageOcr, setImageOcr] = useState<ImageOcr[]>([]);
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
@@ -308,6 +311,20 @@ export default function PackingOrders({
       .then((r) => r.json())
       .then(setVendors);
   }, []);
+  const selectFiles = async (selected: File[]) => {
+    imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
+    setFiles(selected);
+    const images=selected.filter(file=>file.type.startsWith("image/"));
+    setImageOcr(images.map(file=>({name:file.name,url:URL.createObjectURL(file),text:"",progress:0,status:"reading"})));
+    for(const file of images){
+      try{
+        const text=await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
+        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text,progress:1,status:"ready"}:row));
+      }catch{
+        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,status:"error"}:row));
+      }
+    }
+  };
   const readyIds = useMemo(
     () =>
       imports
@@ -329,6 +346,7 @@ export default function PackingOrders({
     );
     const body = new FormData();
     body.append("vendor", vendor.trim());
+    body.append("ocrTexts",JSON.stringify(imageOcr.map(({name,text})=>({name,text}))));
     files.forEach((file) => body.append("files", file));
     try {
       const response = await fetch("/api/order-imports", {
@@ -341,6 +359,8 @@ export default function PackingOrders({
         `${data.imports.length}개 주문서를 분석했습니다. 확인 필요 품목을 검토해 주세요.`,
       );
       setFiles([]);
+      imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
+      setImageOcr([]);
       if (inputRef.current) inputRef.current.value = "";
       await load();
     } catch (error) {
@@ -461,7 +481,7 @@ export default function PackingOrders({
               type="file"
               multiple
               accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.xlsx"
-              onChange={(event) => setFiles([...(event.target.files || [])])}
+              onChange={(event) => void selectFiles([...(event.target.files || [])])}
             />
             <small>
               {files.length
@@ -469,11 +489,19 @@ export default function PackingOrders({
                 : "여러 파일을 한 번에 선택할 수 있습니다."}
             </small>
           </label>
-          <button className="primary" disabled={busy || !vendors.length}>
+          <button className="primary" disabled={busy || !vendors.length || imageOcr.some(row=>row.status==="reading")}>
             <Upload size={18} />
             {busy ? "문서 분석 중" : "주문서 분석하기"}
           </button>
         </form>
+        {imageOcr.length>0&&<div className="image-ocr-list">
+          {imageOcr.map(row=><section className="image-ocr-card" key={row.name}>
+            <div className="image-ocr-preview"><img src={row.url} alt={`${row.name} 주문서 미리보기`}/><strong>{row.name}</strong></div>
+            <label><span>사진에서 읽은 문자 · {row.status==="reading"?`${Math.round(row.progress*100)}%`:row.status==="ready"?"완료":"자동 인식 실패"}</span>
+              <textarea value={row.text} placeholder="추출된 문자가 여기에 표시됩니다. 잘못 읽은 부분은 직접 수정할 수 있습니다." onChange={event=>setImageOcr(current=>current.map(item=>item.name===row.name?{...item,text:event.target.value}:item))}/>
+            </label>
+          </section>)}
+        </div>}
         {!vendors.length && (
           <div className="notice">
             먼저 거래처 관리에서 거래처를 등록해 주세요.

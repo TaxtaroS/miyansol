@@ -99,6 +99,9 @@ importers:
       react-dom:
         specifier: latest
         version: 19.2.8(react@19.2.8)
+      tesseract.js:
+        specifier: ^7.0.0
+        version: 7.0.0
       typescript:
         specifier: latest
         version: 7.0.2
