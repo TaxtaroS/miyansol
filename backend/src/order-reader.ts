@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs';
-import { PDFParse } from 'pdf-parse';
 import { createWorker, PSM } from 'tesseract.js';
 import sharp from 'sharp';
 import {cleanOcrText,normalizeOrderQuantity} from './order-text-normalizer.js';
@@ -40,6 +39,7 @@ async function readExcel(buffer:Buffer){
 }
 
 async function readPdf(buffer:Buffer){
+  const {PDFParse}=await import('pdf-parse');
   const parser=new PDFParse({data:buffer});
   let worker:Awaited<ReturnType<typeof createWorker>>|null=null;
   try{
