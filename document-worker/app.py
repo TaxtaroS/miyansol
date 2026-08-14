@@ -6,12 +6,12 @@ import fitz
 app = FastAPI()
 
 
-@app.get("/health")
+@app.get("/document-api/health")
 def health():
     return {"ok": True, "engine": "pymupdf"}
 
 
-@app.post("/extract-pdf")
+@app.post("/document-api/extract-pdf")
 async def extract_pdf(file: UploadFile = File(...)):
     content = await file.read()
     if not content:
