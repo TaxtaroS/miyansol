@@ -940,6 +940,19 @@ app.get("/api/order-imports/:id/preview", async (req, res, next) => {
     next(error);
   }
 });
+app.get("/api/order-imports/:id/reconstructed-pdf", async (req, res, next) => {
+  try {
+    const order = (await db.prepare("SELECT id,vendor,filename FROM order_imports WHERE id=?").get(req.params.id)) as {id:number;vendor:string;filename:string}|undefined;
+    if(!order)throw new Error("주문서를 찾을 수 없습니다.");
+    const items = (await db.prepare("SELECT i.id,i.source_name,i.quantity,p.sku,p.name matched_name FROM order_import_items i LEFT JOIN products p ON p.id=i.matched_product_id WHERE i.import_id=? ORDER BY i.id").all(req.params.id)) as Array<{id:number;source_name:string;quantity:number;sku:string|null;matched_name:string|null}>;
+    const workerUrl=process.env.VERCEL_URL?`https://${process.env.VERCEL_URL}/document-api/order-preview`:`http://127.0.0.1:8000/document-api/order-preview`;
+    const response=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vendor:order.vendor,filename:order.filename,items:items.map((item,index)=>({sequence:index+1,source_name:item.source_name,quantity:item.quantity,sku:item.sku,matched_name:item.matched_name}))}),signal:AbortSignal.timeout(30000)});
+    if(!response.ok)throw new Error(`주문서 재구성에 실패했습니다 (${response.status}).`);
+    res.type("application/pdf");
+    res.setHeader("Content-Disposition",`inline; filename="reconstructed-order-${order.id}.pdf"`);
+    res.send(Buffer.from(await response.arrayBuffer()));
+  }catch(error){next(error)}
+});
 app.get("/api/order-imports/:id/items", async (req, res, next) => {
   try {
     const order = await db

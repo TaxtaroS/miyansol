@@ -640,11 +640,10 @@ export default function PackingOrders({
             {preview.row.file_type === "manual" ? (
               (()=>{const groups=new Map<string,typeof preview.items>();for(const item of preview.items){const matched=products.find(product=>product.id===item.matched_product_id);const category=matched?majorCategory(matched):"매칭 필요";groups.set(category,[...(groups.get(category)||[]),item])}const ordered=[...groups].sort(([a],[b])=>{const ai=majorOrder.indexOf(a),bi=majorOrder.indexOf(b);return(ai<0?999:ai)-(bi<0?999:bi)||a.localeCompare(b,"ko-KR")});return <div className="manual-dashboard-grid">{ordered.map(([category,rows])=><section className="manual-dashboard-card" key={category}><h3>{category}<small>{rows.length}품목</small></h3><div>{rows.map(item=><article key={item.id}><span><b>{item.matched_name||item.source_name}</b><small>{item.sku||"상품코드 없음"}</small></span><strong>{item.quantity.toLocaleString()}</strong></article>)}</div><footer>합계 <b>{rows.reduce((sum,item)=>sum+item.quantity,0).toLocaleString()}개</b></footer></section>)}</div>})()
             ) : (
-              <iframe
-                className="order-pdf-preview"
-                src={`/api/order-imports/${preview.row.id}/preview`}
-                title={`${preview.row.vendor} 주문서 PDF`}
-              />
+              <div className="reconstructed-order-view">
+                <div className="reconstructed-order-toolbar"><b>분석 결과로 재구성한 주문서 PDF</b><a href={`/api/order-imports/${preview.row.id}/preview`} target="_blank" rel="noreferrer">원본 PDF 보기</a></div>
+                <iframe className="order-pdf-preview" src={`/api/order-imports/${preview.row.id}/reconstructed-pdf`} title={`${preview.row.vendor} 재구성 주문서 PDF`}/>
+              </div>
             )}
             <div className="order-preview-actions">
               <button className="queue-clear" onClick={() => setPreview(null)}>
