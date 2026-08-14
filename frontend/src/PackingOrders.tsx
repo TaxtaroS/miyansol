@@ -276,6 +276,7 @@ export default function PackingOrders({
   const [summary, setSummary] = useState<Summary[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pdfPreparing, setPdfPreparing] = useState(false);
   const [preview, setPreview] = useState<{
     row: ImportRow;
     items: Array<{
@@ -313,14 +314,19 @@ export default function PackingOrders({
       .then(setVendors);
   }, []);
   const selectFiles = async (selected: File[]) => {
+    setPdfPreparing(true);
     imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
     setFiles(selected);
     const images=selected.filter(file=>file.type.startsWith("image/"));
-    const previews=await Promise.all(images.map(async file=>{
-      const pdf=await imageToPdf(file);
-      return {name:file.name,pdfName:pdf.name,pdfBlob:pdf.blob,url:pdf.url,text:"",progress:0,status:"reading" as const};
-    }));
-    setImageOcr(previews);
+    try{
+      const previews=await Promise.all(images.map(async file=>{
+        const pdf=await imageToPdf(file);
+        return {name:file.name,pdfName:pdf.name,pdfBlob:pdf.blob,url:pdf.url,text:"",progress:0,status:"reading" as const};
+      }));
+      setImageOcr(previews);
+    }finally{
+      setPdfPreparing(false);
+    }
     for(const file of images){
       try{
         const recognized=await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
@@ -504,9 +510,9 @@ export default function PackingOrders({
                 : "여러 파일을 한 번에 선택할 수 있습니다."}
             </small>
           </label>
-          <button className="primary" disabled={busy || !vendors.length || imageOcr.some(row=>row.status==="reading")}>
+          <button className="primary" disabled={busy || pdfPreparing || !vendors.length || !files.length}>
             <Upload size={18} />
-            {busy ? "문서 분석 중" : "주문서 분석하기"}
+            {busy ? "주문서 등록 중" : pdfPreparing ? "PDF 변환 중" : "주문서 등록 및 분석"}
           </button>
         </form>
         {imageOcr.length>0&&<div className="image-pdf-section">

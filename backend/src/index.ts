@@ -713,6 +713,8 @@ app.post(
   "/api/order-imports",
   orderUpload.array("files", 30),
   async (req, res, next) => {
+    const startedAt=Date.now();
+    console.log(JSON.stringify({level:"info",message:"order import started",route:"/api/order-imports",requestId:req.headers["x-vercel-id"],files:Array.isArray(req.files)?req.files.length:0}));
     try {
       const vendor = z
         .string()
@@ -789,8 +791,10 @@ app.post(
           engine: analysis.engine,
         });
       }
+      console.log(JSON.stringify({level:"info",message:"order import completed",route:"/api/order-imports",imports:imports.length,durationMs:Date.now()-startedAt}));
       res.status(201).json({ imports });
     } catch (error) {
+      console.error(JSON.stringify({level:"error",message:"order import failed",route:"/api/order-imports",error:error instanceof Error?error.message:String(error),durationMs:Date.now()-startedAt}));
       next(error);
     }
   },
