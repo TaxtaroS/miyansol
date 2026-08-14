@@ -16,6 +16,12 @@ import { analyzeOrderFile } from "./order-analysis-service.js";
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+// Product images are static catalog assets. Serve them before authentication so
+// browser image requests and print previews do not fail with a login response.
+app.use(
+  "/uploads",
+  express.static(fileURLToPath(new URL("../uploads", import.meta.url))),
+);
 const orderUpload = multer({
   storage: multer.memoryStorage(),
   limits: { files: 30, fileSize: 20 * 1024 * 1024 },
@@ -187,10 +193,6 @@ app.use((req, res, next) => {
       .json({ message: "로그인이 만료되었습니다. 다시 로그인해 주세요." });
   }
 });
-app.use(
-  "/uploads",
-  express.static(fileURLToPath(new URL("../uploads", import.meta.url))),
-);
 app.patch("/api/auth/profile", async (req, res, next) => {
   try {
     const current = (
