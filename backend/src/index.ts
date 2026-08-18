@@ -757,41 +757,47 @@ app.post(
       const insertItem = db.prepare(
         "INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,?)",
       );
-      const updateStatus = db.prepare(
-        "UPDATE order_imports SET status=? WHERE id=?",
+      const updateAnalysis = db.prepare(
+        "UPDATE order_imports SET status=?,raw_text=? WHERE id=?",
       );
       const imports = [];
       for (const file of files) {
-        const preview = createOrderPreview(file);
-        const analysis = await analyzeOrderFile(file, products, browserOcr.get(file.originalname));
         const result = await insertImport.run(
           vendor,
           file.originalname,
           file.mimetype,
-          analysis.status,
-          analysis.rawText.slice(0, 100000),
-          preview.sourcePath,
-          preview.previewPath,
+          "PROCESSING",
+          "문서 분석 대기 중",
+          "",
+          "",
           file.buffer,
         );
         const importId = Number(result.lastInsertRowid);
-        for (const row of analysis.items)
-          await insertItem.run(
-            importId,
-            row.sourceName,
-            row.quantity,
-            row.productId,
-            row.confidence,
-          );
-        await updateStatus.run(analysis.status, importId);
-        imports.push({
-          id: importId,
-          filename: file.originalname,
-          rows: analysis.extractedCount,
-          unmatched: analysis.unmatchedCount,
-          status: analysis.status,
-          engine: analysis.engine,
-        });
+        try {
+          const analysis = await analyzeOrderFile(file, products, browserOcr.get(file.originalname));
+          for (const row of analysis.items)
+            await insertItem.run(
+              importId,
+              row.sourceName,
+              row.quantity,
+              row.productId,
+              row.confidence,
+            );
+          await updateAnalysis.run(analysis.status, analysis.rawText.slice(0, 100000), importId);
+          imports.push({
+            id: importId,
+            filename: file.originalname,
+            rows: analysis.extractedCount,
+            unmatched: analysis.unmatchedCount,
+            status: analysis.status,
+            engine: analysis.engine,
+          });
+        } catch (analysisError) {
+          const detail=analysisError instanceof Error?analysisError.message:String(analysisError);
+          await updateAnalysis.run("REVIEW", `문서 분석 오류: ${detail}`.slice(0,100000), importId);
+          imports.push({id:importId,filename:file.originalname,rows:0,unmatched:0,status:"REVIEW",engine:"analysis-failed"});
+          console.error(JSON.stringify({level:"error",message:"order analysis failed after registration",importId,filename:file.originalname,error:detail}));
+        }
       }
       console.log(JSON.stringify({level:"info",message:"order import completed",route:"/api/order-imports",imports:imports.length,durationMs:Date.now()-startedAt}));
       res.status(201).json({ imports });

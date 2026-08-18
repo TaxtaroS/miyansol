@@ -346,9 +346,7 @@ export default function PackingOrders({
       return;
     }
     setBusy(true);
-    setMessage(
-      "문서를 읽고 품목을 매칭하고 있습니다. 이미지 파일은 시간이 조금 걸릴 수 있습니다.",
-    );
+    setMessage("주문서를 먼저 등록한 뒤 품목 분석 결과를 채우고 있습니다.");
     const body = new FormData();
     body.append("vendor", vendor.trim());
     body.append("ocrTexts",JSON.stringify(imageOcr.filter(row=>row.status==="ready"&&row.text.trim()).map(({pdfName,text})=>({name:pdfName,text}))));
@@ -379,6 +377,7 @@ export default function PackingOrders({
       setMessage(
         error instanceof Error ? error.message : "문서 분석에 실패했습니다.",
       );
+      await load();
     } finally {
       setBusy(false);
     }
@@ -490,9 +489,9 @@ export default function PackingOrders({
                 : "여러 파일을 한 번에 선택할 수 있습니다."}
             </small>
           </label>
-          <button className="primary" disabled={busy || pdfPreparing || documentReading || !vendors.length || !files.length}>
+          <button className="primary" disabled={busy || pdfPreparing || !vendors.length || !files.length}>
             <Upload size={18} />
-            {busy ? "주문서 등록 중" : pdfPreparing ? "PDF 변환 중" : documentReading ? "문서 읽는 중" : "주문서 등록 및 분석"}
+            {busy ? "주문서 등록 중" : pdfPreparing ? "PDF 변환 중" : documentReading ? "주문서 먼저 등록" : "주문서 등록 및 분석"}
           </button>
         </form>
         {imageOcr.length>0&&<div className="image-pdf-section">
