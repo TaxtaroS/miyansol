@@ -362,7 +362,7 @@ export default function PackingOrders({
         body,
       });
       const responseText=await response.text();
-      let data:{message?:string;imports?:Array<unknown>}={};
+      let data:{message?:string;imports?:Array<{id:number}>}={};
       try{data=JSON.parse(responseText)}catch{throw new Error(`주문서 서버 응답 오류 (${response.status}). 잠시 후 다시 시도해 주세요.`)}
       if (!response.ok) throw new Error(data.message);
       setMessage(
@@ -373,6 +373,9 @@ export default function PackingOrders({
       setImageOcr([]);
       if (inputRef.current) inputRef.current.value = "";
       await load();
+      void Promise.all((data.imports||[]).map(row=>fetch(`/api/order-imports/${row.id}/analyze`,{method:"POST"})))
+        .then(()=>load())
+        .catch(()=>load());
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "문서 분석에 실패했습니다.",

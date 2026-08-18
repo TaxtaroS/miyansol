@@ -740,64 +740,24 @@ app.post(
       } catch {
         throw new Error("사진에서 추출한 문자 형식이 올바르지 않습니다.");
       }
-      const products = (await db
-        .prepare(
-          `SELECT p.id,p.name,p.catalog_name,p.sku,(SELECT STRING_AGG(value,'|||') FROM (SELECT a.alias value FROM product_aliases a WHERE a.product_id=p.id UNION ALL SELECT l.product_name FROM label_templates l WHERE l.product_id=p.id UNION ALL SELECT l.barcode FROM label_templates l WHERE l.product_id=p.id AND l.barcode IS NOT NULL UNION ALL SELECT j.value FROM label_templates l CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(l.template_data)='array' THEN l.template_data ELSE '[]'::jsonb END) j(value) WHERE l.product_id=p.id) alias_values) aliases FROM products p WHERE p.active=TRUE`,
-        )
-        .all()) as Array<{
-        id: number;
-        name: string;
-        catalog_name: string | null;
-        sku: string;
-        aliases: string | null;
-      }>;
       const insertImport = db.prepare(
         "INSERT INTO order_imports(vendor,filename,file_type,status,raw_text,source_path,preview_pdf_path,file_data) VALUES(?,?,?,?,?,?,?,?)",
       );
-      const insertItem = db.prepare(
-        "INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,?)",
-      );
-      const updateAnalysis = db.prepare(
-        "UPDATE order_imports SET status=?,raw_text=? WHERE id=?",
-      );
       const imports = [];
       for (const file of files) {
+        const extractedText = browserOcr.get(file.originalname)?.trim() || "";
         const result = await insertImport.run(
           vendor,
           file.originalname,
           file.mimetype,
-          "PROCESSING",
-          "문서 분석 대기 중",
+          "REVIEW",
+          extractedText || "원본 주문서 등록 완료 · 품목 분석 대기",
           "",
           "",
           file.buffer,
         );
         const importId = Number(result.lastInsertRowid);
-        try {
-          const analysis = await analyzeOrderFile(file, products, browserOcr.get(file.originalname));
-          for (const row of analysis.items)
-            await insertItem.run(
-              importId,
-              row.sourceName,
-              row.quantity,
-              row.productId,
-              row.confidence,
-            );
-          await updateAnalysis.run(analysis.status, analysis.rawText.slice(0, 100000), importId);
-          imports.push({
-            id: importId,
-            filename: file.originalname,
-            rows: analysis.extractedCount,
-            unmatched: analysis.unmatchedCount,
-            status: analysis.status,
-            engine: analysis.engine,
-          });
-        } catch (analysisError) {
-          const detail=analysisError instanceof Error?analysisError.message:String(analysisError);
-          await updateAnalysis.run("REVIEW", `문서 분석 오류: ${detail}`.slice(0,100000), importId);
-          imports.push({id:importId,filename:file.originalname,rows:0,unmatched:0,status:"REVIEW",engine:"analysis-failed"});
-          console.error(JSON.stringify({level:"error",message:"order analysis failed after registration",importId,filename:file.originalname,error:detail}));
-        }
+        imports.push({ id: importId, filename: file.originalname, rows: 0, unmatched: 0, status: "REVIEW", engine: "registered" });
       }
       console.log(JSON.stringify({level:"info",message:"order import completed",route:"/api/order-imports",imports:imports.length,durationMs:Date.now()-startedAt}));
       res.status(201).json({ imports });
@@ -807,6 +767,26 @@ app.post(
     }
   },
 );
+app.post("/api/order-imports/:id/analyze", async (req, res, next) => {
+  try {
+    const order = (await db.prepare("SELECT id,filename,file_type,file_data,raw_text FROM order_imports WHERE id=?").get(req.params.id)) as {id:number;filename:string;file_type:string;file_data:Buffer|null;raw_text:string}|undefined;
+    if (!order?.file_data) return res.status(404).json({message:"분석할 주문서 원본을 찾을 수 없습니다."});
+    const products = (await db.prepare(`SELECT p.id,p.name,p.catalog_name,p.sku,(SELECT STRING_AGG(value,'|||') FROM (SELECT a.alias value FROM product_aliases a WHERE a.product_id=p.id UNION ALL SELECT l.product_name FROM label_templates l WHERE l.product_id=p.id UNION ALL SELECT l.barcode FROM label_templates l WHERE l.product_id=p.id AND l.barcode IS NOT NULL UNION ALL SELECT j.value FROM label_templates l CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(l.template_data)='array' THEN l.template_data ELSE '[]'::jsonb END) j(value) WHERE l.product_id=p.id) alias_values) aliases FROM products p WHERE p.active=TRUE`).all()) as Array<{id:number;name:string;catalog_name:string|null;sku:string;aliases:string|null}>;
+    const file={fieldname:"files",originalname:order.filename,encoding:"7bit",mimetype:order.file_type,size:order.file_data.length,buffer:order.file_data} as Express.Multer.File;
+    const suppliedText=order.raw_text.startsWith("원본 주문서 등록 완료")?undefined:order.raw_text;
+    const analysis=await analyzeOrderFile(file,products,suppliedText);
+    await db.transaction(async()=>{
+      await db.prepare("DELETE FROM order_import_items WHERE import_id=?").run(order.id);
+      const insertItem=db.prepare("INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,?)");
+      for(const row of analysis.items) await insertItem.run(order.id,row.sourceName,row.quantity,row.productId,row.confidence);
+      await db.prepare("UPDATE order_imports SET status=?,raw_text=? WHERE id=?").run(analysis.status,analysis.rawText.slice(0,100000),order.id);
+    })();
+    res.json({id:order.id,status:analysis.status,rows:analysis.extractedCount,unmatched:analysis.unmatchedCount});
+  } catch(error) {
+    console.error(JSON.stringify({level:"error",message:"registered order analysis failed",importId:req.params.id,error:error instanceof Error?error.message:String(error)}));
+    next(error);
+  }
+});
 app.post("/api/order-imports/manual", async (req, res, next) => {
   try {
     const data = z
