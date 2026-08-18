@@ -265,6 +265,9 @@ export default function PackingOrders({
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [pdfPreparing, setPdfPreparing] = useState(false);
+  const [reviewMajor, setReviewMajor] = useState("");
+  const [reviewProductId, setReviewProductId] = useState(0);
+  const [reviewQuantity, setReviewQuantity] = useState(1);
   const [preview, setPreview] = useState<{
     row: ImportRow;
     items: Array<{
@@ -277,6 +280,8 @@ export default function PackingOrders({
     }>;
   } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const reviewMajors = useMemo(() => majorOrder.filter(value => products.some(product => majorCategory(product) === value)), [products]);
+  const reviewProducts = useMemo(() => products.filter(product => !reviewMajor || majorCategory(product) === reviewMajor).sort((a,b)=>`${subCategory(a)} ${a.name}`.localeCompare(`${subCategory(b)} ${b.name}`,"ko-KR",{numeric:true})), [products,reviewMajor]);
   const load = () =>
     fetch("/api/order-imports")
       .then(async (r) => {
@@ -404,8 +409,34 @@ export default function PackingOrders({
     }
     setPreview({ row, items: data.items });
   };
+  const addReviewItem = async () => {
+    if (!preview || !reviewProductId || reviewQuantity < 1) {
+      setMessage("확인할 상품과 수량을 선택해 주세요.");
+      return;
+    }
+    const response = await fetch(`/api/order-imports/${preview.row.id}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({productId:reviewProductId,quantity:reviewQuantity}),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(data.message || "주문 품목을 추가하지 못했습니다.");
+      return;
+    }
+    setReviewProductId(0);
+    setReviewQuantity(1);
+    await load();
+    const refreshed = await fetch(`/api/order-imports/${preview.row.id}/items`).then(r=>r.json());
+    setPreview(current=>current?{...current,items:refreshed.items||[]}:current);
+    setMessage("주문서에 품목을 추가했습니다.");
+  };
   const confirmReview = async () => {
     if (!preview) return;
+    if (!preview.items.length) {
+      setMessage("주문 품목을 한 개 이상 추가한 뒤 확인 완료해 주세요.");
+      return;
+    }
     const response = await fetch(
       `/api/order-imports/${preview.row.id}/review`,
       { method: "PATCH" },
@@ -563,7 +594,7 @@ export default function PackingOrders({
                         onClick={() => void openPreview(row)}
                       >
                         <Eye size={16} />
-                        {row.reviewed_at ? "확인 완료" : "파일 확인"}
+                        {row.reviewed_at ? "확인 완료" : "확인 필요"}
                       </button>
                     </td>
                     <td>
@@ -629,15 +660,21 @@ export default function PackingOrders({
               (()=>{const groups=new Map<string,typeof preview.items>();for(const item of preview.items){const matched=products.find(product=>product.id===item.matched_product_id);const category=matched?majorCategory(matched):"매칭 필요";groups.set(category,[...(groups.get(category)||[]),item])}const ordered=[...groups].sort(([a],[b])=>{const ai=majorOrder.indexOf(a),bi=majorOrder.indexOf(b);return(ai<0?999:ai)-(bi<0?999:bi)||a.localeCompare(b,"ko-KR")});return <div className="manual-dashboard-grid">{ordered.map(([category,rows])=><section className="manual-dashboard-card" key={category}><h3>{category}<small>{rows.length}품목</small></h3><div>{rows.map(item=><article key={item.id}><span><b>{item.matched_name||item.source_name}</b><small>{item.sku||"상품코드 없음"}</small></span><strong>{item.quantity.toLocaleString()}</strong></article>)}</div><footer>합계 <b>{rows.reduce((sum,item)=>sum+item.quantity,0).toLocaleString()}개</b></footer></section>)}</div>})()
             ) : (
               <div className="reconstructed-order-view">
-                <div className="reconstructed-order-toolbar"><b>분석 결과로 재구성한 주문서 PDF</b><a href={`/api/order-imports/${preview.row.id}/preview`} target="_blank" rel="noreferrer">원본 PDF 보기</a></div>
-                <iframe className="order-pdf-preview" src={`/api/order-imports/${preview.row.id}/reconstructed-pdf`} title={`${preview.row.vendor} 재구성 주문서 PDF`}/>
+                <div className="reconstructed-order-toolbar"><b>{preview.items.length ? "분석 결과로 재구성한 주문서 PDF" : "원본 주문서를 보면서 품목을 추가하세요"}</b><a href={`/api/order-imports/${preview.row.id}/preview`} target="_blank" rel="noreferrer">원본 PDF 크게 보기</a></div>
+                <iframe className="order-pdf-preview" src={preview.items.length?`/api/order-imports/${preview.row.id}/reconstructed-pdf`:`/api/order-imports/${preview.row.id}/preview`} title={`${preview.row.vendor} 주문서 PDF`}/>
+                <div className="review-item-entry">
+                  <label>대분류<select value={reviewMajor} onChange={event=>{setReviewMajor(event.target.value);setReviewProductId(0)}}><option value="">전체 대분류</option>{reviewMajors.map(value=><option key={value}>{value}</option>)}</select></label>
+                  <label>상품 선택<select value={reviewProductId} onChange={event=>setReviewProductId(Number(event.target.value))}><option value={0}>상품을 선택하세요</option>{reviewProducts.map(product=><option key={product.id} value={product.id}>{subCategory(product)} · {product.name}</option>)}</select></label>
+                  <label>수량<input type="number" min={1} value={reviewQuantity} onChange={event=>setReviewQuantity(Number(event.target.value))}/></label>
+                  <button className="primary" onClick={()=>void addReviewItem()}><Plus size={16}/> 품목 추가</button>
+                </div>
               </div>
             )}
             <div className="order-preview-actions">
               <button className="queue-clear" onClick={() => setPreview(null)}>
                 닫기
               </button>
-              <button className="primary" onClick={() => void confirmReview()}>
+              <button className="primary" disabled={!preview.items.length} onClick={() => void confirmReview()}>
                 <CheckCircle2 size={17} /> 내용 확인 완료
               </button>
             </div>

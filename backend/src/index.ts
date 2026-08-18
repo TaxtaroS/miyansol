@@ -977,6 +977,24 @@ app.patch("/api/order-imports/:id/review", async (req, res, next) => {
     next(error);
   }
 });
+app.post("/api/order-imports/:id/items", async (req, res, next) => {
+  try {
+    const data = z.object({
+      productId: z.number().int().positive(),
+      quantity: z.number().int().positive(),
+    }).parse(req.body);
+    const order = await db.prepare("SELECT id,status FROM order_imports WHERE id=?").get(req.params.id) as {id:number;status:string}|undefined;
+    if (!order || order.status === "COMMITTED") throw new Error("품목을 추가할 주문서를 찾을 수 없습니다.");
+    const product = await db.prepare("SELECT id,name FROM products WHERE id=? AND active=1").get(data.productId) as {id:number;name:string}|undefined;
+    if (!product) throw new Error("선택한 상품을 찾을 수 없습니다.");
+    const result = await db.prepare("INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,1)").run(order.id,product.name,data.quantity,product.id);
+    const unmatched = (await db.prepare("SELECT COUNT(*) count FROM order_import_items WHERE import_id=? AND matched_product_id IS NULL").get(order.id) as {count:number}).count;
+    await db.prepare("UPDATE order_imports SET status=? WHERE id=?").run(unmatched ? "REVIEW" : "READY",order.id);
+    res.status(201).json({id:Number(result.lastInsertRowid),ok:true});
+  } catch(error) {
+    next(error);
+  }
+});
 app.patch("/api/order-import-items/:id", async (req, res, next) => {
   try {
     const data = z
