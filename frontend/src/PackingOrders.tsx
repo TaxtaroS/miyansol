@@ -355,11 +355,8 @@ export default function PackingOrders({
     const body = new FormData();
     body.append("vendor", vendor.trim());
     body.append("ocrTexts",JSON.stringify(imageOcr.filter(row=>row.status==="ready"&&row.text.trim()).map(({pdfName,text})=>({name:pdfName,text}))));
-    const pdfByImage=new Map(imageOcr.map(row=>[row.name,row]));
     files.forEach((file) => {
-      const converted=pdfByImage.get(file.name);
-      if(converted)body.append("files",converted.pdfBlob,converted.pdfName);
-      else body.append("files",file);
+      body.append("files",file);
     });
     try {
       const response = await fetch("/api/order-imports", {
@@ -378,9 +375,14 @@ export default function PackingOrders({
       setImageOcr([]);
       if (inputRef.current) inputRef.current.value = "";
       await load();
-      void Promise.all((data.imports||[]).map(row=>fetch(`/api/order-imports/${row.id}/analyze`,{method:"POST"})))
-        .then(()=>load())
-        .catch(()=>load());
+      void Promise.all((data.imports||[]).map(async row=>{
+        const analysisResponse=await fetch(`/api/order-imports/${row.id}/analyze`,{method:"POST"});
+        const analysisData=await analysisResponse.json();
+        if(!analysisResponse.ok)throw new Error(analysisData.message||"Gemini 주문서 분석에 실패했습니다.");
+        return analysisData;
+      }))
+        .then(async results=>{setMessage(`Gemini 분석 완료: ${results.reduce((sum,row)=>sum+(row.rows||0),0)}개 품목을 찾았습니다.`);await load()})
+        .catch(async error=>{setMessage(error instanceof Error?error.message:"Gemini 주문서 분석에 실패했습니다.");await load()});
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "문서 분석에 실패했습니다.",

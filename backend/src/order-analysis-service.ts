@@ -23,6 +23,7 @@ export async function analyzeOrderFile(file:{buffer:Buffer;mimetype:string;origi
     }
   }catch(error){
     console.error(JSON.stringify({level:'error',message:'Gemini order reading failed; using OCR fallback',filename:file.originalname,error:error instanceof Error?error.message:String(error)}));
+    if(process.env.GEMINI_API_KEY?.trim()) throw error;
   }
   if(!extracted&&supplied){
     extracted={raw:suppliedText,rows:rowsFromText(suppliedText)};
