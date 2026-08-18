@@ -338,6 +338,7 @@ export default function PackingOrders({
   );
   const stockReady =
     summary.length > 0 && summary.every((row) => row.stock_status === "READY");
+  const documentReading = imageOcr.some((row) => row.status === "reading");
   const upload = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!vendor.trim() || !files.length) {
@@ -350,7 +351,7 @@ export default function PackingOrders({
     );
     const body = new FormData();
     body.append("vendor", vendor.trim());
-    body.append("ocrTexts",JSON.stringify(imageOcr.map(({pdfName,text})=>({name:pdfName,text}))));
+    body.append("ocrTexts",JSON.stringify(imageOcr.filter(row=>row.status==="ready"&&row.text.trim()).map(({pdfName,text})=>({name:pdfName,text}))));
     const pdfByImage=new Map(imageOcr.map(row=>[row.name,row]));
     files.forEach((file) => {
       const converted=pdfByImage.get(file.name);
@@ -489,9 +490,9 @@ export default function PackingOrders({
                 : "여러 파일을 한 번에 선택할 수 있습니다."}
             </small>
           </label>
-          <button className="primary" disabled={busy || pdfPreparing || !vendors.length || !files.length}>
+          <button className="primary" disabled={busy || pdfPreparing || documentReading || !vendors.length || !files.length}>
             <Upload size={18} />
-            {busy ? "주문서 등록 중" : pdfPreparing ? "PDF 변환 중" : "주문서 등록 및 분석"}
+            {busy ? "주문서 등록 중" : pdfPreparing ? "PDF 변환 중" : documentReading ? "문서 읽는 중" : "주문서 등록 및 분석"}
           </button>
         </form>
         {imageOcr.length>0&&<div className="image-pdf-section">

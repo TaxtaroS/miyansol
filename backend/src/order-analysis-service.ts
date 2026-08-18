@@ -10,8 +10,8 @@ export type AnalyzedOrderItem={sourceName:string;quantity:number;productId:numbe
  * 3) 자동 확정하지 못한 항목은 검토 대상으로 반환
  */
 export async function analyzeOrderFile(file:{buffer:Buffer;mimetype:string;originalname:string},products:AnalysisProduct[],browserOcrText?:string){
-  const supplied=browserOcrText!==undefined;
   const suppliedText=browserOcrText?.trim()||'';
+  const supplied=suppliedText.length>0;
   const extracted=supplied?{raw:suppliedText,rows:rowsFromText(suppliedText)}:await readOrderFile(file);
   const items:AnalyzedOrderItem[]=extracted.rows.map(row=>{
     const matched=matchProduct(row.name,products);
