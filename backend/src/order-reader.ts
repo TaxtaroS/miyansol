@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import {cleanOcrText,normalizeDocumentLine,normalizeOrderQuantity,splitOcrCells} from './order-text-normalizer.js';
 import {readImageWithPaddle} from './paddle-ocr.js';
 
-export type ParsedOrderRow={name:string;quantity:number};
+export type ParsedOrderRow={name:string;quantity:number;needsReview?:boolean;note?:string};
 
 let imageWorkerPromise:ReturnType<typeof createWorker>|null=null;
 function getImageWorker(){
