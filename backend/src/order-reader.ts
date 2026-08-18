@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { createWorker, PSM } from 'tesseract.js';
 import sharp from 'sharp';
-import {cleanOcrText,normalizeOrderQuantity} from './order-text-normalizer.js';
+import {cleanOcrText,normalizeDocumentLine,normalizeOrderQuantity,splitOcrCells} from './order-text-normalizer.js';
 import {readImageWithPaddle} from './paddle-ocr.js';
 
 export type ParsedOrderRow={name:string;quantity:number};
@@ -23,10 +23,24 @@ function cellText(cell:ExcelJS.Cell){try{return cell.text?.trim()||''}catch{cons
 export function rowsFromText(text:string):ParsedOrderRow[]{
   const rows:ParsedOrderRow[]=[];
   for(const original of text.split(/\r?\n/)){
-    const line=clean(original);if(!line||ignored.test(line))continue;
-    const match=line.match(/^(.+?)(?:\s*[|,\t]\s*|\s{2,}|\s+[xX*]\s*|\s+)(\d{1,6})\s*(?:개|EA|PCS)?\s*[|\]\)\\._-]*\s*$/i);
-    if(!match)continue;let name=clean(match[1]);const quantity=positiveInt(match[2]);
+    const line=normalizeDocumentLine(original);if(!line||/^\[Page \d+\]$/i.test(line)||ignored.test(line))continue;
+    const cells=splitOcrCells(line);let name='';let quantity=0;
+    if(cells.length>=2){
+      for(let index=cells.length-1;index>0;index--){
+        const candidate=positiveInt(cells[index]);
+        if(candidate){quantity=candidate;name=clean(cells.slice(0,index).join(' '));break}
+      }
+    }
+    if(!quantity){
+      const match=line.match(/^(.+?)(?:\s+[xX*]\s*|\s+)(\d{1,6})\s*(?:개|EA|PCS)?\s*[|\]\)\\._-]*\s*$/i);
+      if(match){name=clean(match[1]);quantity=positiveInt(match[2])}
+    }
+    if(!name||!quantity)continue;
+    name=name.replace(/^\s*(?:\d{1,4}[.)-]?\s+)+/,'').trim();
+    const sourceCode=name.match(/\b[A-Z]{2,}[A-Z0-9-]*\d[A-Z0-9-]*\b/i)?.[0]||'';
     const brandIndex=name.toLowerCase().lastIndexOf('miyansol');if(brandIndex>=0)name=name.slice(brandIndex).replace(/^miyansol\s+(?:llg|jewe)?\s*/i,'').trim();
+    name=name.replace(/[|,;:\s]+$/,'').trim();
+    if(sourceCode&&!name.toLowerCase().includes(sourceCode.toLowerCase()))name=`${sourceCode} ${name}`.trim();
     if(name&&!ignored.test(name)&&quantity)rows.push({name,quantity});
   }
   return mergeRows(rows);

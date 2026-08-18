@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { majorCategory, majorOrder, subCategory } from "./product-categories";
-import { readOrderImage } from "./browser-ocr";
+import { readOrderImage, readOrderPdf } from "./browser-ocr";
 import { imageToPdf } from "./image-pdf";
 import "./OrderPreview.css";
 
@@ -303,20 +303,22 @@ export default function PackingOrders({
     setPdfPreparing(true);
     imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
     setFiles(selected);
-    const images=selected.filter(file=>file.type.startsWith("image/"));
+    const documents=selected.filter(file=>file.type.startsWith("image/")||file.type==="application/pdf"||file.name.toLowerCase().endsWith(".pdf"));
     try{
-      const previews=await Promise.all(images.map(async file=>{
-        const pdf=await imageToPdf(file);
+      const previews=await Promise.all(documents.map(async file=>{
+        const pdf=file.type.startsWith("image/")?await imageToPdf(file):{name:file.name,blob:file,url:URL.createObjectURL(file)};
         return {name:file.name,pdfName:pdf.name,pdfBlob:pdf.blob,url:pdf.url,text:"",progress:0,status:"reading" as const};
       }));
       setImageOcr(previews);
     }finally{
       setPdfPreparing(false);
     }
-    for(const file of images){
+    for(const file of documents){
       try{
-        const recognized=await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
-        const correctedPdf=await imageToPdf(file,recognized.rotation);
+        const recognized=file.type.startsWith("image/")
+          ?await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)))
+          :await readOrderPdf(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
+        const correctedPdf=file.type.startsWith("image/")?await imageToPdf(file,recognized.rotation):{name:file.name,blob:file,url:URL.createObjectURL(file)};
         setImageOcr(current=>current.map(row=>{
           if(row.name!==file.name)return row;
           URL.revokeObjectURL(row.url);

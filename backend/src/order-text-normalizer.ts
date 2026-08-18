@@ -14,3 +14,15 @@ export function splitOcrCells(line:string){
   if(line.includes('|'))return line.split('|').map(cleanOcrText).filter(Boolean);
   return line.split(/\t|\s{2,}/).map(cleanOcrText).filter(Boolean);
 }
+
+export function normalizeDocumentLine(value:string){
+  return String(value||'')
+    .normalize('NFKC')
+    .replace(/[│┃¦]/g,'|')
+    .replace(/[‘’`]/g,"'")
+    .replace(/[“”]/g,'"')
+    .replace(/\b(?:O|o)(?=\d)|(?<=\d)(?:O|o)\b/g,'0')
+    .replace(/\b(?:I|l)(?=\d)|(?<=\d)(?:I|l)\b/g,'1')
+    .replace(/[ \t]+/g,' ')
+    .trim();
+}

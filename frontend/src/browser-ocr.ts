@@ -94,6 +94,88 @@ function textScore(text: string, confidence: number) {
   return useful + rows * 8 + confidence + brands * 500 + longNumbers * 80 + productCodes * 60;
 }
 
+function uniqueLines(parts: string[]) {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const part of parts) {
+    for (const raw of part.split(/\r?\n/)) {
+      const line = raw.replace(/[ \t]+/g, " ").trim();
+      if (line.length < 2) continue;
+      const key = line.toLowerCase().replace(/\s+/g, "");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      lines.push(line);
+    }
+  }
+  return lines.join("\n");
+}
+
+function pageChunks(canvas: HTMLCanvasElement) {
+  const chunks: HTMLCanvasElement[] = [canvas];
+  if (canvas.height < 900) return chunks;
+  const overlap = Math.round(canvas.height * 0.06);
+  const bandHeight = Math.ceil(canvas.height / 3) + overlap * 2;
+  for (let band = 0; band < 3; band += 1) {
+    const top = Math.max(0, Math.round((canvas.height * band) / 3) - overlap);
+    const bottom = Math.min(canvas.height, top + bandHeight);
+    const chunk = document.createElement("canvas");
+    chunk.width = canvas.width;
+    chunk.height = bottom - top;
+    const context = chunk.getContext("2d");
+    if (!context) continue;
+    context.drawImage(canvas, 0, top, canvas.width, chunk.height, 0, 0, chunk.width, chunk.height);
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
+export async function readOrderPdf(file: File, onProgress: (progress: number) => void) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const workerUrl = (await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url")).default;
+  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const worker = await getWorker();
+  await worker.setParameters({
+    tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+    preserve_interword_spaces: "1",
+    user_defined_dpi: "300",
+  });
+
+  const pageTexts: string[] = [];
+  const pageCount = Math.min(pdf.numPages, 20);
+  let completed = 0;
+  const totalJobs = pageCount * 4;
+  try {
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(3.2, Math.max(1.8, 2600 / Math.max(baseViewport.width, baseViewport.height)));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("PDF 페이지 화면을 만들 수 없습니다.");
+      await page.render({ canvasContext: context, viewport, canvas }).promise;
+
+      const chunkTexts: string[] = [];
+      for (const chunk of pageChunks(canvas)) {
+        progressListener = (progress) => onProgress(Math.min(0.99, (completed + progress) / totalJobs));
+        const result = await worker.recognize(chunk, { rotateAuto: true });
+        if (result.data.text.trim()) chunkTexts.push(result.data.text.trim());
+        completed += 1;
+      }
+      pageTexts.push(`[Page ${pageNumber}]\n${uniqueLines(chunkTexts)}`);
+      page.cleanup();
+    }
+    onProgress(1);
+    return { text: pageTexts.join("\n\n"), rotation: 0 as const };
+  } finally {
+    progressListener = null;
+    await pdf.cleanup();
+  }
+}
+
 export async function readOrderImage(file: File, onProgress: (progress: number) => void) {
   const worker = await getWorker();
   await worker.setParameters({
