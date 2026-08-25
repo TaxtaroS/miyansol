@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import { z } from "zod";
-import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -10,9 +9,9 @@ import { spawnSync } from "node:child_process";
 import multer from "multer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { db } from "./neon-db.js";
-import { normalizeAlias } from "./order-reader.js";
-import { analyzeOrderFile } from "./order-analysis-service.js";
+import { db } from "./neon-db";
+import { normalizeAlias } from "./order-reader";
+import { analyzeOrderFile } from "./order-analysis-service";
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
@@ -20,7 +19,7 @@ app.use(express.json());
 // browser image requests and print previews do not fail with a login response.
 app.use(
   "/uploads",
-  express.static(fileURLToPath(new URL("../uploads", import.meta.url))),
+  express.static(path.join(__dirname, "../uploads")),
 );
 const orderUpload = multer({
   storage: multer.memoryStorage(),
@@ -28,7 +27,7 @@ const orderUpload = multer({
 });
 const runtimeDataDir = process.env.VERCEL
   ? path.join(os.tmpdir(), "miyansol-orders")
-  : fileURLToPath(new URL("../data/", import.meta.url));
+  : path.join(__dirname, "../data/");
 const orderFileDir = path.join(runtimeDataDir, "order-files");
 const orderPreviewDir = path.join(runtimeDataDir, "order-previews");
 fs.mkdirSync(orderFileDir, { recursive: true });
@@ -36,9 +35,7 @@ fs.mkdirSync(orderPreviewDir, { recursive: true });
 const previewPython =
   process.env.CODEX_PYTHON ||
   "C:/Users/USER/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe";
-const previewScript = fileURLToPath(
-  new URL("../scripts/order-preview-pdf.py", import.meta.url),
-);
+const previewScript = path.join(__dirname, "../scripts/order-preview-pdf.py");
 function createOrderPreview(file: Express.Multer.File) {
   const extension = path.extname(file.originalname).toLowerCase() || ".bin";
   const key = randomUUID();
@@ -583,7 +580,7 @@ app.get("/api/dashboard-inventory", async (_req, res) => {
     .all()) as Array<Record<string, unknown>>;
   const names = JSON.parse(
     fs.readFileSync(
-      fileURLToPath(new URL("../data/inventory-names.json", import.meta.url)),
+      path.join(__dirname, "../data/inventory-names.json"),
       "utf8",
     ),
   ) as string[];
