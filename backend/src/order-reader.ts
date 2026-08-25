@@ -1,8 +1,8 @@
 import ExcelJS from 'exceljs';
 import { createWorker, PSM } from 'tesseract.js';
 import sharp from 'sharp';
-import {cleanOcrText,normalizeDocumentLine,normalizeOrderQuantity,splitOcrCells} from './order-text-normalizer.js';
-import {readImageWithPaddle} from './paddle-ocr.js';
+import {cleanOcrText,normalizeDocumentLine,normalizeOrderQuantity,splitOcrCells} from './order-text-normalizer';
+import {readImageWithPaddle} from './paddle-ocr';
 
 export type ParsedOrderRow={name:string;quantity:number;needsReview?:boolean;note?:string};
 
