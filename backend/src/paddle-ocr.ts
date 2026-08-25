@@ -1,5 +1,5 @@
-import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {spawnSync} from 'node:child_process';
 type PaddleResult={rows:Array<{name:string;quantity:number;confidence:number}>;raw:string;engine:string};
-const backendRoot=fileURLToPath(new URL('..',import.meta.url));const python=process.env.PADDLE_PYTHON||path.join(backendRoot,'.venv','Scripts','python.exe');const script=path.join(backendRoot,'scripts','paddle_order_ocr.py');
+const backendRoot=path.join(__dirname,'..');const python=process.env.PADDLE_PYTHON||path.join(backendRoot,'.venv','Scripts','python.exe');const script=path.join(backendRoot,'scripts','paddle_order_ocr.py');
 export function paddleAvailable(){return process.platform==='win32'&&fs.existsSync(python)&&fs.existsSync(script)}
 export function readImageWithPaddle(buffer:Buffer,extension='jpg'):PaddleResult|null{if(!paddleAvailable())return null;const tempDir=fs.mkdtempSync(path.join(os.tmpdir(),'miyansol-ocr-'));const input=path.join(tempDir,`order.${extension.replace(/[^a-z0-9]/gi,'')||'jpg'}`);try{fs.writeFileSync(input,buffer);const result=spawnSync(python,[script,input],{encoding:'utf8',timeout:180000,maxBuffer:10*1024*1024,windowsHide:true});if(result.status!==0||!result.stdout.trim())return null;return JSON.parse(result.stdout.trim()) as PaddleResult}catch{return null}finally{fs.rmSync(tempDir,{recursive:true,force:true})}}
