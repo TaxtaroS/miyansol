@@ -1,81 +1,62 @@
-import type { ParsedOrderRow } from "./order-reader";
+import { matchProduct, readOrderFile, rowsFromText, type ParsedOrderRow } from "./order-reader";
+import { readOrderWithGemini } from "./gemini-order-reader";
 
-const PROMPT = `너는 MIYANSOL 재고관리 회사의 주문서와 피킹시트를 판독한다.
-첨부 문서에서 실제로 주문하거나 출고할 상품명과 수량만 추출하라.
+export type AnalysisProduct = { id: number; name: string; catalog_name: string | null; sku: string; aliases: string | null };
+export type AnalyzedOrderItem = { sourceName: string; quantity: number; productId: number | null; confidence: number };
 
-판독 규칙:
-- 문서는 단순 표, 여러 소표가 붙은 격자, 사이트별 목록, 손글씨 수량이 섞인 피킹시트일 수 있다.
-- 취소선, X, 취소 또는 제외 표시가 명확한 행은 제외한다.
-- 인쇄된 상품명 옆이나 대응 수량 칸의 손글씨 숫자를 같은 행으로 연결한다.
-- S/L, 미니/라지처럼 크기 열이 나뉜 표는 크기를 상품명에 포함한다.
-- 수량이 없는 단순 주문 목록은 1로 처리한다.
-- 정자 표기, 체크, T, 획 표기가 명확하면 수량으로 환산한다. 확신이 없으면 quantity=1, needsReview=true로 둔다.
-- 2(D/P) 같은 메모는 숫자 2를 수량으로 읽되 needsReview=true로 둔다.
-- 상품명은 줄임말, 영문, 번호를 포함해 원문 그대로 보존한다.
-- 제목, 날짜, 사이트명, 합계, 박스 번호, SKU만 있는 값은 상품으로 만들지 않는다.
-- 같은 상품이 여러 곳에 반복되어도 행을 합치지 않는다.
-- 보이지 않는 값은 추측하지 않는다.`;
-
-type GeminiResult = { name?: unknown; quantity?: unknown; needsReview?: unknown; note?: unknown };
-
-export async function readOrderWithGemini(file: {
-  buffer: Buffer;
-  mimetype: string;
-  originalname: string;
-}): Promise<{ rows: ParsedOrderRow[]; raw: string } | null> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) return null;
-  const mimeType = file.mimetype || (file.originalname.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
-  if (!(mimeType === "application/pdf" || mimeType.startsWith("image/"))) return null;
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(55000),
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [
-          { inlineData: { mimeType, data: file.buffer.toString("base64") } },
-          { text: PROMPT },
-        ] }],
-        generationConfig: {
-          temperature: 0,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              required: ["name", "quantity", "needsReview", "note"],
-              properties: {
-                name: { type: "STRING" },
-                quantity: { type: "INTEGER", minimum: 1 },
-                needsReview: { type: "BOOLEAN" },
-                note: { type: "STRING" },
-              },
-            },
-          },
-        },
-      }),
-    },
-  );
-  const payload = await response.json() as {
-    error?: { message?: string };
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  if (!response.ok) throw new Error(`Gemini 문서 판독 실패: ${payload.error?.message || response.status}`);
-  const raw = payload.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("").trim() || "[]";
-  const parsed = JSON.parse(raw) as GeminiResult[];
-  const rows = parsed.flatMap((row): ParsedOrderRow[] => {
-    const name = typeof row.name === "string" ? row.name.trim() : "";
-    const quantity = Math.max(0, Math.round(Number(row.quantity)));
-    if (!name || !quantity) return [];
-    return [{
-      name,
-      quantity,
-      needsReview: row.needsReview === true,
-      note: typeof row.note === "string" ? row.note.trim() : "",
-    }];
+/**
+ * 주문서 분석 전담 파이프라인.
+ * 1) PDF/Excel/사진에서 문자와 표 행 추출
+ * 2) 상품코드·정식명·거래처 별칭으로 실제 상품 매칭
+ * 3) 자동 확정하지 못한 항목은 검토 대상으로 반환
+ */
+export async function analyzeOrderFile(
+  file: { buffer: Buffer; mimetype: string; originalname: string },
+  products: AnalysisProduct[],
+  browserOcrText?: string,
+) {
+  const suppliedText = browserOcrText?.trim() || "";
+  const supplied = suppliedText.length > 0;
+  let engine = "table-ocr+alias-matcher";
+  let extracted: { raw: string; rows: ParsedOrderRow[] } | undefined;
+  try {
+    const gemini = await readOrderWithGemini(file);
+    if (gemini) {
+      extracted = gemini;
+      engine = "gemini-vision+alias-matcher";
+    }
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: "error",
+      message: "Gemini order reading failed; using OCR fallback",
+      filename: file.originalname,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    if (process.env.GEMINI_API_KEY?.trim()) throw error;
+  }
+  if (!extracted && supplied) {
+    extracted = { raw: suppliedText, rows: rowsFromText(suppliedText) };
+    engine = "browser-ocr+alias-matcher";
+  }
+  if (!extracted) {
+    extracted = await readOrderFile(file);
+    engine = "ocr-fallback+alias-matcher";
+  }
+  const items: AnalyzedOrderItem[] = extracted.rows.map(row => {
+    const matched = matchProduct(row.name, products);
+    return {
+      sourceName: row.note ? `${row.name} [${row.note}]` : row.name,
+      quantity: row.quantity,
+      productId: row.needsReview ? null : matched?.id ?? null,
+      confidence: row.needsReview ? 0 : matched?.score ?? 0,
+    };
   });
-  return { rows, raw };
+  return {
+    rawText: extracted.raw,
+    items,
+    extractedCount: items.length,
+    unmatchedCount: items.filter(item => item.productId === null).length,
+    status: items.length > 0 && items.every(item => item.productId !== null) ? "READY" as const : "REVIEW" as const,
+    engine,
+  };
 }
