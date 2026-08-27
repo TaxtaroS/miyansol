@@ -1,1 +1,4 @@
-{"name":"miyansol-inventory","private":true,"type":"module","scripts":{"dev":"concurrently -n API,WEB -c yellow,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"","build":"npm --prefix backend run build && npm --prefix frontend run build","start":"npm --prefix backend start"},"devDependencies":{"concurrently":"^9.2.1"},"packageManager":"pnpm@10.14.0"}
+{"name":"miyansol-inventory",
+  "packageManager": "pnpm@9.15.4",
+  "private":true,"type":"module",
+  "scripts":{"dev":"concurrently -n API,WEB -c yellow,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"","build":"npm --prefix backend run build && npm --prefix frontend run build","start":"npm --prefix backend start"},"devDependencies":{"concurrently":"^9.2.1"},"packageManager":"pnpm@10.14.0"}
