@@ -6,9 +6,10 @@
       "framework": "vite"
     },
     "backend": {
-      "root": "backend",
-      "entrypoint": "src/index.ts"
-    },
+  "root": "backend",
+  "framework": "express",
+  "entrypoint": "src/index.ts"
+   },
     "document": {
       "root": "document-worker",
       "entrypoint": "app.py"
