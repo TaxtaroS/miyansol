@@ -6,12 +6,13 @@
       "framework": "vite"
     },
     "backend": {
-  "root": "backend",
-  "framework": "express",
-  "entrypoint": "src/index.ts"
-   },
+      "root": "backend",
+      "framework": "express",
+      "entrypoint": "src/index.ts"
+    },
     "document": {
       "root": "document-worker",
+      "framework": "fastapi",
       "entrypoint": "app.py"
     }
   },

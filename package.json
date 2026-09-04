@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -n API,WEB -c yellow,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
-    "build": "npm --prefix backend run build && npm --prefix frontend run build",
-    "start": "npm --prefix backend start"
+    "dev": "concurrently -n API,WEB -c yellow,cyan \"pnpm --filter stockmate-api dev\" \"pnpm --filter stockmate-web dev\"",
+    "build": "pnpm --filter stockmate-api build && pnpm --filter stockmate-web build",
+    "start": "pnpm --filter stockmate-api start"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
