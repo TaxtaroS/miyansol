@@ -8,6 +8,7 @@
     "backend": {
       "root": "backend",
       "framework": "express",
+      "installCommand": "npm ci",
       "entrypoint": "src/index.ts"
     },
     "document": {
