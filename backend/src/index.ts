@@ -651,10 +651,22 @@ app.post("/api/labels/sync-product-barcodes", async (req, res, next) => {
        JOIN products p ON p.id=l.product_id
        WHERE (l.vendor LIKE '%교보%' OR l.vendor LIKE '%영풍%') AND p.active=1`,
     ).all()) as Array<{ id: number; label_barcode: string | null; product_barcode: string | null }>;
+    const products = (await db.prepare(
+      "SELECT id,name,catalog_name,barcode FROM products WHERE active=1",
+    ).all()) as Array<{ id: number; name: string; catalog_name: string | null; barcode: string | null }>;
     const update = db.prepare("UPDATE label_templates SET barcode=? WHERE id=?");
+    const findLabel = db.prepare(
+      "SELECT id FROM label_templates WHERE vendor='교보영풍' AND product_id=? LIMIT 1",
+    );
+    const insertLabel = db.prepare(
+      `INSERT INTO label_templates(vendor,category,product_name,barcode,source_path,product_id,template_data)
+       VALUES('교보영풍','',?,?,?,?,?)
+       ON CONFLICT(source_path) DO UPDATE SET barcode=excluded.barcode,product_name=excluded.product_name,product_id=excluded.product_id,template_data=excluded.template_data`,
+    );
     let updated = 0;
     let alreadyCurrent = 0;
     let missing = 0;
+    let created = 0;
 
     await db.transaction(async () => {
       for (const row of rows) {
@@ -664,8 +676,22 @@ app.post("/api/labels/sync-product-barcodes", async (req, res, next) => {
         await update.run(barcode, row.id);
         updated += 1;
       }
+      for (const product of products) {
+        const barcode = (product.barcode || "").replace(/[\s-]/g, "");
+        if (!/^\d{13}$/.test(barcode)) continue;
+        if (await findLabel.get(product.id)) continue;
+        const name = product.name.trim() || product.catalog_name?.trim() || `상품 ${product.id}`;
+        await insertLabel.run(
+          name,
+          barcode,
+          `system://sellmate/kyobo-youngpoong/${product.id}`,
+          product.id,
+          JSON.stringify([name, barcode, ""]),
+        );
+        created += 1;
+      }
     })();
-    res.json({ updated, alreadyCurrent, missing, total: rows.length });
+    res.json({ updated, created, alreadyCurrent, missing, total: rows.length, products: products.length });
   } catch (error) {
     next(error);
   }
