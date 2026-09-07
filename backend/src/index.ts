@@ -661,9 +661,6 @@ app.post("/api/labels/import-store-catalog", async (req, res, next) => {
     const upsertVendor = db.prepare(
       "INSERT INTO label_vendors(name) VALUES(?) ON CONFLICT(name) DO UPDATE SET active=TRUE",
     );
-    const insertLabel = db.prepare(
-      "INSERT INTO label_templates(vendor,category,product_name,barcode,source_path,product_id,template_data) VALUES(?,?,?,?,?,?,?)",
-    );
     const vendors = new Set<string>();
     let matched = 0;
     await db.transaction(async () => {
@@ -672,11 +669,21 @@ app.post("/api/labels/import-store-catalog", async (req, res, next) => {
       for (const vendor of new Set(catalog.labels.map(label => label.vendor))) {
         await db.prepare("DELETE FROM label_templates WHERE vendor=?").run(vendor);
       }
-      for (const label of catalog.labels) {
+      const rows = catalog.labels.map(label => {
         vendors.add(label.vendor);
         const product = findProduct(label.product_name);
         if (product) matched += 1;
-        await insertLabel.run(label.vendor, label.category, label.product_name, label.barcode, label.source_path, product?.id || null, JSON.stringify(label.template_data));
+        return [label.vendor, label.category, label.product_name, label.barcode, label.source_path, product?.id || null, JSON.stringify(label.template_data)];
+      });
+      // Neon is a remote database. Insert in compact batches instead of making
+      // thousands of round trips, so the one-time catalog sync completes well
+      // within the server request limit.
+      for (let start = 0; start < rows.length; start += 300) {
+        const batch = rows.slice(start, start + 300);
+        const placeholders = batch.map(() => "(?,?,?,?,?,?,?)").join(",");
+        await db.prepare(
+          `INSERT INTO label_templates(vendor,category,product_name,barcode,source_path,product_id,template_data) VALUES ${placeholders}`,
+        ).run(...batch.flat());
       }
       for (const vendor of vendors) await upsertVendor.run(vendor);
     })();
