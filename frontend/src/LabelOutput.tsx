@@ -112,6 +112,7 @@ function displayCode(item: Label) {
 }
 
 function displayProductName(item: Label) {
+  if (item.dashboard_name) return item.dashboard_name;
   const size = /^[ls]$/i.test(item.category.trim()) ? item.category.trim().toUpperCase() : '';
   return size && !new RegExp(`\\s${size}$`, 'i').test(item.product_name) ? `${item.product_name} ${size}` : item.product_name;
 }
@@ -128,21 +129,20 @@ function fitFont(value: string, maximum: number, minimum: number, capacity: numb
 
 function labelMarkup(item: QueueItem, copy: number) {
   const values = templateValues(item);
-  const name = escapeHtml(item.product_name);
+  const name = escapeHtml(displayProductName(item));
   const kind = vendorKind(item.vendor);
   const barcode = primaryBarcode(item);
-  const first = escapeHtml(values[0] || item.product_name);
+  const first = escapeHtml(values[0] || displayProductName(item));
   const second = escapeHtml(barcode);
-  const third = escapeHtml(values[2] || '');
-  // 교보·영풍은 셀메이트와 같은 13자리 상품 바코드(EAN-13)를 사용한다.
-  // 템플릿 보조값보다 상품의 기준 바코드를 우선해 화면·인쇄·스캔 값을 일치시킨다.
-  if (kind === 'retail') return `<article class="label retail" data-copy="${copy}"><div class="retail-title" style="font-size:${fitFont(values[0] || item.product_name,7.1,4.3,19)}pt">${first}</div><div class="retail-price" style="font-size:${fitFont(values[2] || '',7,4.8,19)}pt">${third}</div><div class="retail-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:60,width:1.7})}</div></article>`;
+  const third = escapeHtml(values[2] || '판매가격 확인 필요');
+  // 교보·영풍은 UniLabel의 옛 번호가 아니라 셀메이트 번호를 쓰되,
+  // 셀메이트 4×2 가격 라벨과 동일한 상품명·가격·바코드 구성으로 출력한다.
+  if (kind === 'retail' || item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand" style="font-size:${fitFont(`[미야앤솔] ${displayProductName(item)}`,7.3,4.5,23)}pt">[미야앤솔] ${name}</div><div class="standard-title" style="font-size:${fitFont(values[2] || '',6.2,4.5,20)}pt">${third}</div><div class="standard-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:54,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
   if (kind === 'shilla') return `<article class="label shilla" data-copy="${copy}"><div class="shilla-code" style="font-size:${fitFont(values[1] || '',10.2,7.2,12.5)}pt">${second}</div><div class="shilla-title" style="font-size:${fitFont(values[0] || item.product_name,5.8,3.7,31)}pt">${first}</div><div class="shilla-bars">${barcodeSvg(values[1] || '',{fontSize:17,height:68,width:2})}</div></article>`;
   if (kind === 'shinsegae') return `<article class="label shinsegae" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',10.5,6.2,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.6,3.8,15)}pt">${first}</div></article>`;
   if (kind === 'lotte') return `<article class="label lotte" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',11.5,6.5,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.5,3.9,28)}pt">${first}</div></article>`;
   if (kind === 'export') return `<article class="label export" data-copy="${copy}"><div class="export-brand">${first}</div><div class="export-title">${second}</div><div class="export-code">${third}</div></article>`;
   if (kind === 'dutyfree') return `<article class="label dutyfree" data-copy="${copy}"><div class="dutyfree-title">${first}</div></article>`;
-  if (item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand">[miyansol]&nbsp; ${escapeHtml(values[0] || '')}</div><div class="standard-title">${escapeHtml(values[1] || item.product_name)}</div><div class="standard-bars">${barcodeSvg(item.barcode || '',{format:'CODE128',fontSize:18,height:50,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
   return `<article class="label standard" data-copy="${copy}"><div class="standard-brand">[miyansol]</div><div class="standard-title">${name}</div><div class="standard-bars">${barcodeSvg(item.barcode || '')}</div></article>`;
 }
 
