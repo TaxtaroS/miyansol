@@ -102,6 +102,9 @@ function normalizedBarcode(value: string | null | undefined) {
 function primaryBarcode(item: Label | QueueItem) {
   const direct = normalizedBarcode(item.barcode);
   if (direct) return direct;
+  // Retail files may still contain discontinued store numbers. Kyobo and
+  // Youngpoong must never fall back to those embedded values.
+  if (vendorKind(item.vendor) === 'retail') return '';
   return templateValues(item as QueueItem)
     .map(normalizedBarcode)
     .find(value => /^\d{13}$/.test(value)) || '';
@@ -125,6 +128,16 @@ function fitFont(value: string, maximum: number, minimum: number, capacity: numb
   const width = [...value].reduce((sum, character) => sum + (/[^\x00-\xff]/.test(character) ? 1 : 0.58), 0);
   if (!width) return maximum;
   return Math.max(minimum, Math.min(maximum, Number((maximum * capacity / width).toFixed(2))));
+}
+
+function RetailLiveSample({item,large=false}:{item:Label;large?:boolean}) {
+  const values = templateValues(item as QueueItem);
+  const barcode = primaryBarcode(item);
+  return <div className={`retail-live-sample${large?' large':''}`}>
+    <div className="retail-live-name">[미야앤솔] {displayProductName(item)}</div>
+    <div className="retail-live-price">{values[2] || '판매가격 확인 필요'}</div>
+    <div className="retail-live-bars" dangerouslySetInnerHTML={{__html:barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:54,width:1.55})}} />
+  </div>;
 }
 
 function labelMarkup(item: QueueItem, copy: number) {
@@ -185,6 +198,7 @@ export default function LabelOutput() {
   const products = useMemo(() => {const unique=new Map<string,string>();for(const label of labels.filter(label => !major || majorCategory(label) === major))unique.set(productKey(label),displayProductName(label));return [...unique].map(([key,name])=>({key,name})).sort((a,b)=>a.name.localeCompare(b.name,'ko-KR',{numeric:true}))}, [labels, major]);
   const results = useMemo(() => labels.filter(label => (!major || majorCategory(label) === major) && (!product || productKey(label) === product)).sort((a,b) => displayProductName(a).localeCompare(displayProductName(b),'ko-KR',{numeric:true}) || a.category.localeCompare(b.category,'ko-KR',{numeric:true})), [labels, major, product]);
   const samplePath = vendorSamples[vendor];
+  const liveRetailSample = vendorKind(vendor) === 'retail' ? (results.find(label=>primaryBarcode(label)) || results[0]) : undefined;
   const addLabelVendor=async()=>{const name=window.prompt('추가할 라벨 공급처명을 입력해 주세요.','');if(!name?.trim())return;const response=await fetch('/api/labels/vendors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim()})});const data=await response.json();setMessage(response.ok?'라벨 공급처를 추가했습니다.':data.message);if(response.ok){await loadVendors();setVendor(data.vendor);setMajor('');setProduct('')}};
   const editLabelVendor=async()=>{const selected=vendors.find(item=>item.vendor===vendor);if(!selected){setMessage('수정할 라벨 공급처를 먼저 선택해 주세요.');return}const name=window.prompt('라벨 공급처명을 수정해 주세요.',selected.vendor);if(!name?.trim()||name.trim()===selected.vendor)return;const response=await fetch(`/api/labels/vendors/${selected.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim()})});const data=await response.json();setMessage(response.ok?'라벨 공급처명을 수정했습니다.':data.message);if(response.ok){setVendor(data.vendor);setMajor('');setProduct('');await loadVendors()}};
   const syncRetailBarcodes=async(selectedVendor=vendor)=>{const response=await fetch('/api/labels/sync-product-barcodes',{method:'POST'});const data=await response.json();if(!response.ok){setMessage(data.message||'셀메이트 바코드 동기화에 실패했습니다.');return}setMessage(`셀메이트 원본 ${data.sellmateSource}개를 기준으로 기존 ${data.updated}개를 교체하고 새 라벨 ${data.created}개를 추가했습니다. 이미 일치 ${data.alreadyCurrent}개, 코드 확인 필요 ${data.missing}개입니다.`);await loadVendors();const refreshed=await fetch(`/api/labels?vendor=${encodeURIComponent(selectedVendor)}&search=${encodeURIComponent(search)}`);setLabels(await refreshed.json())};
@@ -215,7 +229,7 @@ export default function LabelOutput() {
         <strong>통합검색</strong>
         <div className="barcode-search-input"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="상품명 또는 바코드"/></div>
       </div>
-      <div className="vendor-sample-bar"><strong>선택 공급처 라벨 샘플</strong>{samplePath?<button className="vendor-sample-button" onClick={()=>setSampleOpen(true)}><img src={samplePath} alt={`${vendor} 라벨 샘플`}/><span><b>{vendor}</b><small>이미지를 누르면 크게 확인할 수 있습니다.</small></span></button>:<span className="vendor-sample-guide">주요 공급처를 선택하면 대표 라벨이 표시됩니다.</span>}</div>
+      <div className="vendor-sample-bar"><strong>선택 공급처 라벨 샘플</strong>{liveRetailSample?<button className="vendor-sample-button" onClick={()=>setSampleOpen(true)}><RetailLiveSample item={liveRetailSample}/><span><b>{vendor}</b><small>현재 셀메이트 코드로 만든 실제 출력 미리보기입니다.</small></span></button>:samplePath?<button className="vendor-sample-button" onClick={()=>setSampleOpen(true)}><img src={samplePath} alt={`${vendor} 라벨 샘플`}/><span><b>{vendor}</b><small>이미지를 누르면 크게 확인할 수 있습니다.</small></span></button>:<span className="vendor-sample-guide">주요 공급처를 선택하면 대표 라벨이 표시됩니다.</span>}</div>
       <div className="barcode-results"><div className="result-count">검색 결과 {results.length}개</div><div className="table"><table><thead><tr><th>공급처</th><th>대분류</th><th>상품명</th><th>라벨 코드</th><th></th></tr></thead><tbody>{results.map(label=><tr key={label.id}><td>{label.vendor}</td><td>{majorCategory(label)}</td><td>{displayProductName(label)}</td><td>{displayCode(label)||'-'}</td><td><button className="queue-add" onClick={()=>add(label)}><Plus size={16}/> 대기목록 추가</button></td></tr>)}</tbody></table></div></div>
     </div>
     <div className="panel print-queue-panel">
@@ -223,6 +237,6 @@ export default function LabelOutput() {
       {!queue.length?<div className="empty-queue">위 상품 목록에서 필요한 라벨을 대기목록에 추가해 주세요.</div>:<div className="table queue-table"><table><thead><tr><th>순서</th><th>공급처</th><th>대분류</th><th>상품명</th><th>라벨 코드</th><th>출력 매수</th><th></th></tr></thead><tbody>{queue.map((item,index)=><tr key={item.id}><td>{index+1}</td><td>{item.vendor}</td><td>{majorCategory(item)}</td><td>{displayProductName(item)}</td><td>{displayCode(item)||'-'}</td><td><input type="number" min="1" value={item.quantity} onChange={e=>updateQuantity(item.id,Number(e.target.value))}/></td><td><button className="queue-remove" onClick={()=>setQueue(current=>current.filter(row=>row.id!==item.id))} title="삭제"><Trash2 size={17}/></button></td></tr>)}</tbody></table></div>}
       {message&&<div className="notice">{message}</div>}
     </div>
-    {sampleOpen&&samplePath&&<div className="label-sample-overlay" onMouseDown={()=>setSampleOpen(false)}><div className="label-sample-popup" onMouseDown={event=>event.stopPropagation()}><button onClick={()=>setSampleOpen(false)}>×</button><h2>{vendor} 라벨 샘플</h2><img src={samplePath} alt={`${vendor} 라벨 샘플 크게 보기`}/></div></div>}
+    {sampleOpen&&(liveRetailSample||samplePath)&&<div className="label-sample-overlay" onMouseDown={()=>setSampleOpen(false)}><div className="label-sample-popup" onMouseDown={event=>event.stopPropagation()}><button onClick={()=>setSampleOpen(false)}>×</button><h2>{vendor} 라벨 샘플</h2>{liveRetailSample?<RetailLiveSample item={liveRetailSample} large/>:<img src={samplePath} alt={`${vendor} 라벨 샘플 크게 보기`}/>}</div></div>}
   </div>;
 }
