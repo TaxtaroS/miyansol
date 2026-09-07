@@ -648,15 +648,31 @@ app.post("/api/labels/import-store-catalog", async (req, res, next) => {
     const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as {
       labels: Array<{ vendor: string; category: string; product_name: string; barcode: string | null; source_path: string; template_data: string[] }>;
     };
-    const products = (await db.prepare("SELECT id,name,catalog_name FROM products WHERE active=1").all()) as Array<{ id: number; name: string; catalog_name: string | null }>;
-    const normalize = (value: string) => value.toLowerCase().replace(/복사본|미니|라지|스몰|기본백|파우치|백|[^가-힣a-z0-9]/g, "");
-    const findProduct = (name: string) => {
-      const key = normalize(name);
-      if (key.length < 2) return undefined;
-      return products.find(product => {
-        const productKey = normalize(product.catalog_name || product.name);
-        return productKey === key || productKey.includes(key) || key.includes(productKey);
-      });
+    type Product = { id: number; name: string; catalog_name: string | null };
+    const products = (await db.prepare("SELECT id,name,catalog_name FROM products WHERE active=1").all()) as Product[];
+    const aliases = (await db.prepare("SELECT a.product_id,a.alias FROM product_aliases a JOIN products p ON p.id=a.product_id WHERE p.active=1").all()) as Array<{ product_id: number; alias: string }>;
+    const normalize = (value: string) => value.toLowerCase().replace(/[^가-힣a-z0-9]/g, "");
+    const byKey = new Map<string, Product[]>();
+    const register = (key: string, product: Product) => {
+      const normalized = normalize(key);
+      if (!normalized) return;
+      byKey.set(normalized, [...(byKey.get(normalized) || []), product]);
+    };
+    for (const product of products) { register(product.name, product); if (product.catalog_name) register(product.catalog_name, product); }
+    for (const alias of aliases) { const product = products.find(item => item.id === alias.product_id); if (product) register(alias.alias, product); }
+    const findProduct = (label: { product_name: string; category: string; template_data: string[] }) => {
+      const category = label.category.trim();
+      const candidates = [label.product_name, `${label.product_name} ${category}`];
+      if (/^[LS]$/i.test(category)) candidates.unshift(`기본백 ${label.product_name} ${category.toUpperCase()}`);
+      if (/^mini$/i.test(category)) candidates.unshift(`미니백 ${label.product_name}`);
+      if (category === '구슬') candidates.unshift(`롱참 ${label.product_name}`, `구슬${label.product_name}`);
+      if (category === '미니구슬') candidates.unshift(`미니참 ${label.product_name}`, `미니구슬${label.product_name}`);
+      for (const candidate of candidates) {
+        const matches = byKey.get(normalize(candidate)) || [];
+        const unique = [...new Map(matches.map(product => [product.id, product])).values()];
+        if (unique.length === 1) return unique[0];
+      }
+      return undefined;
     };
     const upsertVendor = db.prepare(
       "INSERT INTO label_vendors(name) VALUES(?) ON CONFLICT(name) DO UPDATE SET active=TRUE",
@@ -669,11 +685,23 @@ app.post("/api/labels/import-store-catalog", async (req, res, next) => {
       for (const vendor of new Set(catalog.labels.map(label => label.vendor))) {
         await db.prepare("DELETE FROM label_templates WHERE vendor=?").run(vendor);
       }
-      const rows = catalog.labels.map(label => {
+      const prepared = catalog.labels.map(label => {
         vendors.add(label.vendor);
-        const product = findProduct(label.product_name);
+        const product = findProduct(label);
         if (product) matched += 1;
-        return [label.vendor, label.category, label.product_name, label.barcode, label.source_path, product?.id || null, JSON.stringify(label.template_data)];
+        return { label, product };
+      });
+      const sellmateBarcodeByProduct = new Map<number, string>();
+      for (const { label, product } of prepared) {
+        if (label.vendor === '셀메이트' && product && /^\d{13}$/.test(label.barcode || '')) sellmateBarcodeByProduct.set(product.id, label.barcode!);
+      }
+      const rows = prepared.map(({ label, product }) => {
+        const retail = label.vendor.includes('교보') || label.vendor.includes('영풍');
+        // Retail label layouts come from UniLabel, but their number is always
+        // the current Sellmate barcode. Never retain a barcode embedded in a
+        // store label file.
+        const barcode = retail ? (product ? sellmateBarcodeByProduct.get(product.id) || null : null) : label.barcode;
+        return [label.vendor, label.category, label.product_name, barcode, label.source_path, product?.id || null, JSON.stringify(label.template_data)];
       });
       // Neon is a remote database. Insert in compact batches instead of making
       // thousands of round trips, so the one-time catalog sync completes well

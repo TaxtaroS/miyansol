@@ -22,9 +22,9 @@ const vendorSamples: Record<string,string> = {
 };
 
 function majorCategory(label: Label) {
-  // Store labels have their own folder/category structure. A loose product
-  // match can point several labels at one mini-bag product, so it must not
-  // override the category encoded in the original UniLabel file.
+  if (label.product_id && label.dashboard_name) {
+    return dashboardMajorCategory({name:label.dashboard_name,catalog_name:label.catalog_name || undefined});
+  }
   const category = (label.category || '').replace(/\s/g, '').toLowerCase();
   const name = label.product_name.replace(/\s/g, '').toLowerCase();
   if (label.vendor.includes('셀메이트') && (category === 'l' || category === 's' || name.includes('basicbag') || name.includes('기본백'))) return '기본백';
@@ -173,9 +173,9 @@ export default function LabelOutput() {
   const [sampleOpen, setSampleOpen] = useState(false);
 
   const loadVendors=()=>fetch('/api/labels/vendors').then(r => r.json()).then(setVendors);
-  const importStoreCatalog=async()=>{const response=await fetch('/api/labels/import-store-catalog',{method:'POST'});const data=await response.json();if(!response.ok){setMessage(data.message||'매장 라벨 원본을 불러오지 못했습니다.');return}sessionStorage.setItem('miyansol-store-label-catalog-v2','1');setMessage(`매장 라벨 원본 ${data.imported}개를 적용했습니다. ${data.vendors}개 매장, 상품 연결 ${data.matched}개입니다.`);await loadVendors()};
+  const importStoreCatalog=async()=>{const response=await fetch('/api/labels/import-store-catalog',{method:'POST'});const data=await response.json();if(!response.ok){setMessage(data.message||'매장 라벨 원본을 불러오지 못했습니다.');return}sessionStorage.setItem('miyansol-store-label-catalog-v3','1');setMessage(`매장 라벨 원본 ${data.imported}개를 적용했습니다. ${data.vendors}개 매장, 상품 연결 ${data.matched}개입니다.`);await loadVendors()};
   useEffect(() => { void loadVendors(); }, []);
-  useEffect(() => { if(!sessionStorage.getItem('miyansol-store-label-catalog-v2')) void importStoreCatalog(); }, []);
+  useEffect(() => { if(!sessionStorage.getItem('miyansol-store-label-catalog-v3')) void importStoreCatalog(); }, []);
   useEffect(() => { fetch(`/api/labels?vendor=${encodeURIComponent(vendor)}&search=${encodeURIComponent(search)}`).then(r => r.json()).then(setLabels); }, [vendor, search]);
 
   const majors = useMemo(() => {
@@ -207,7 +207,7 @@ export default function LabelOutput() {
       <p>공급처를 먼저 선택하고 대분류, 상품 순서로 좁혀 인쇄 대기목록에 추가하세요.</p>
       <div className="barcode-filter-grid">
         <strong>공급처 선택</strong>
-        <div className="label-vendor-control"><select value={vendor} onChange={e=>{const nextVendor=e.target.value;setVendor(nextVendor);setMajor('');setProduct('');if(nextVendor.includes('교보')||nextVendor.includes('영풍'))void syncRetailBarcodes(nextVendor)}}><option value="">전체 공급처</option>{vendors.map(item=><option value={item.vendor} key={item.id}>{item.vendor} ({item.count})</option>)}</select><button type="button" onClick={()=>void addLabelVendor()}><Plus size={15}/> 추가</button><button type="button" onClick={()=>void editLabelVendor()} disabled={!vendor}><Pencil size={15}/> 수정</button>{(vendor.includes('교보')||vendor.includes('영풍'))&&<span className="vendor-sample-guide">셀메이트 기준 코드를 자동 적용합니다.</span>}</div>
+        <div className="label-vendor-control"><select value={vendor} onChange={e=>{const nextVendor=e.target.value;setVendor(nextVendor);setMajor('');setProduct('')}}><option value="">전체 공급처</option>{vendors.map(item=><option value={item.vendor} key={item.id}>{item.vendor} ({item.count})</option>)}</select><button type="button" onClick={()=>void addLabelVendor()}><Plus size={15}/> 추가</button><button type="button" onClick={()=>void editLabelVendor()} disabled={!vendor}><Pencil size={15}/> 수정</button>{(vendor.includes('교보')||vendor.includes('영풍'))&&<span className="vendor-sample-guide">대시보드 분류 · 셀메이트 바코드 기준</span>}</div>
         <strong>대분류</strong>
         <select value={major} onChange={e=>{setMajor(e.target.value);setProduct('')}}><option value="">전체 대분류</option>{majors.map(value=><option key={value}>{value}</option>)}</select>
         <strong>상품</strong>
