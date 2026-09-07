@@ -1,50 +1,25 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "services": {
-    "frontend": {
-      "root": "frontend",
-      "framework": "vite"
-    },
-    "backend": {
-      "root": "backend",
-      "framework": "express",
-      "installCommand": "npm ci",
-      "entrypoint": "src/index.ts"
-    },
-    "document": {
-      "root": "document-worker",
-      "framework": "fastapi",
-      "entrypoint": "app.py"
+  "buildCommand": "pnpm --filter stockmate-web build",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 60,
+      "includeFiles": "backend/{data,scripts,uploads}/**"
     }
   },
   "rewrites": [
     {
-      "source": "/uploads/(.*)",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
+      "source": "/api/:path*",
+      "destination": "/api"
     },
     {
-      "source": "/api/(.*)?",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
+      "source": "/uploads/:path*",
+      "destination": "/api"
     },
     {
-      "source": "/document-api/(.*)?",
-      "destination": {
-        "type": "service",
-        "service": "document"
-      }
-    },
-    {
-      "source": "/(.*)",
-      "destination": {
-        "type": "service",
-        "service": "frontend"
-      }
+      "source": "/:path*",
+      "destination": "/index.html"
     }
   ]
 }

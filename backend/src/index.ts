@@ -9,9 +9,14 @@ import { spawnSync } from "node:child_process";
 import multer from "multer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { db } from "./neon-db";
 import { normalizeAlias } from "./order-reader";
 import { analyzeOrderFile } from "./order-analysis-service";
+
+// Vercel uses Neon through DATABASE_URL. A fresh local checkout works without
+// secrets by falling back to the bundled SQLite database.
+const { db } = process.env.DATABASE_URL
+  ? require("./neon-db")
+  : require("./db");
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
