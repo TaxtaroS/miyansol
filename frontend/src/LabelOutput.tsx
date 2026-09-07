@@ -22,9 +22,9 @@ const vendorSamples: Record<string,string> = {
 };
 
 function majorCategory(label: Label) {
-  if (label.product_id && label.dashboard_name) {
-    return dashboardMajorCategory({name:label.dashboard_name,catalog_name:label.catalog_name || undefined});
-  }
+  // Store labels have their own folder/category structure. A loose product
+  // match can point several labels at one mini-bag product, so it must not
+  // override the category encoded in the original UniLabel file.
   const category = (label.category || '').replace(/\s/g, '').toLowerCase();
   const name = label.product_name.replace(/\s/g, '').toLowerCase();
   if (label.vendor.includes('셀메이트') && (category === 'l' || category === 's' || name.includes('basicbag') || name.includes('기본백'))) return '기본백';
