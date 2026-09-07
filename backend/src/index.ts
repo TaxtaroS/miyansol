@@ -640,6 +640,51 @@ app.get("/api/labels/vendors", async (_req, res) =>
       .all(),
   ),
 );
+app.post("/api/labels/import-store-catalog", async (req, res, next) => {
+  try {
+    const current = (req as express.Request & { user: LoginToken }).user;
+    if (current.role !== "ADMIN") return res.status(403).json({ message: "관리자만 매장 라벨 원본을 적용할 수 있습니다." });
+    const catalogPath = path.join(__dirname, "../data/label-catalog.json");
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as {
+      labels: Array<{ vendor: string; category: string; product_name: string; barcode: string | null; source_path: string; template_data: string[] }>;
+    };
+    const products = (await db.prepare("SELECT id,name,catalog_name FROM products WHERE active=1").all()) as Array<{ id: number; name: string; catalog_name: string | null }>;
+    const normalize = (value: string) => value.toLowerCase().replace(/복사본|미니|라지|스몰|기본백|파우치|백|[^가-힣a-z0-9]/g, "");
+    const findProduct = (name: string) => {
+      const key = normalize(name);
+      if (key.length < 2) return undefined;
+      return products.find(product => {
+        const productKey = normalize(product.catalog_name || product.name);
+        return productKey === key || productKey.includes(key) || key.includes(productKey);
+      });
+    };
+    const upsertVendor = db.prepare(
+      "INSERT INTO label_vendors(name) VALUES(?) ON CONFLICT(name) DO UPDATE SET active=TRUE",
+    );
+    const insertLabel = db.prepare(
+      "INSERT INTO label_templates(vendor,category,product_name,barcode,source_path,product_id,template_data) VALUES(?,?,?,?,?,?,?)",
+    );
+    const vendors = new Set<string>();
+    let matched = 0;
+    await db.transaction(async () => {
+      // The catalog is authoritative: clearing only its named stores removes
+      // prior partial imports and makes each count match the original files.
+      for (const vendor of new Set(catalog.labels.map(label => label.vendor))) {
+        await db.prepare("DELETE FROM label_templates WHERE vendor=?").run(vendor);
+      }
+      for (const label of catalog.labels) {
+        vendors.add(label.vendor);
+        const product = findProduct(label.product_name);
+        if (product) matched += 1;
+        await insertLabel.run(label.vendor, label.category, label.product_name, label.barcode, label.source_path, product?.id || null, JSON.stringify(label.template_data));
+      }
+      for (const vendor of vendors) await upsertVendor.run(vendor);
+    })();
+    res.json({ imported: catalog.labels.length, vendors: vendors.size, matched, unmatched: catalog.labels.length - matched });
+  } catch (error) {
+    next(error);
+  }
+});
 app.post("/api/labels/sync-product-barcodes", async (req, res, next) => {
   try {
     const current = (req as express.Request & { user: LoginToken }).user;
@@ -651,9 +696,6 @@ app.post("/api/labels/sync-product-barcodes", async (req, res, next) => {
        JOIN products p ON p.id=l.product_id
        WHERE (l.vendor LIKE '%교보%' OR l.vendor LIKE '%영풍%') AND p.active=1`,
     ).all()) as Array<{ id: number; product_id: number; label_barcode: string | null }>;
-    const products = (await db.prepare(
-      "SELECT id,name,catalog_name FROM products WHERE active=1",
-    ).all()) as Array<{ id: number; name: string; catalog_name: string | null }>;
     const sellmateRows = (await db.prepare(
       "SELECT product_id,barcode FROM label_templates WHERE vendor LIKE '%셀메이트%' AND product_id IS NOT NULL",
     ).all()) as Array<{ product_id: number; barcode: string | null }>;
@@ -665,18 +707,9 @@ app.post("/api/labels/sync-product-barcodes", async (req, res, next) => {
       }
     }
     const update = db.prepare("UPDATE label_templates SET barcode=? WHERE id=?");
-    const findLabel = db.prepare(
-      "SELECT id FROM label_templates WHERE vendor='교보영풍' AND product_id=? LIMIT 1",
-    );
-    const insertLabel = db.prepare(
-      `INSERT INTO label_templates(vendor,category,product_name,barcode,source_path,product_id,template_data)
-       VALUES('교보영풍','',?,?,?,?,?)
-       ON CONFLICT(source_path) DO UPDATE SET barcode=excluded.barcode,product_name=excluded.product_name,product_id=excluded.product_id,template_data=excluded.template_data`,
-    );
     let updated = 0;
     let alreadyCurrent = 0;
     let missing = 0;
-    let created = 0;
 
     await db.transaction(async () => {
       for (const row of rows) {
@@ -686,22 +719,8 @@ app.post("/api/labels/sync-product-barcodes", async (req, res, next) => {
         await update.run(barcode, row.id);
         updated += 1;
       }
-      for (const product of products) {
-        const barcode = sellmateBarcodeByProduct.get(product.id) || "";
-        if (!/^\d{13}$/.test(barcode)) continue;
-        if (await findLabel.get(product.id)) continue;
-        const name = product.name.trim() || product.catalog_name?.trim() || `상품 ${product.id}`;
-        await insertLabel.run(
-          name,
-          barcode,
-          `system://sellmate/kyobo-youngpoong/${product.id}`,
-          product.id,
-          JSON.stringify([name, barcode, ""]),
-        );
-        created += 1;
-      }
     })();
-    res.json({ updated, created, alreadyCurrent, missing, total: rows.length, products: products.length, sellmateSource: sellmateBarcodeByProduct.size });
+    res.json({ updated, created: 0, alreadyCurrent, missing, total: rows.length, sellmateSource: sellmateBarcodeByProduct.size });
   } catch (error) {
     next(error);
   }

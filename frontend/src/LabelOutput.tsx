@@ -173,7 +173,9 @@ export default function LabelOutput() {
   const [sampleOpen, setSampleOpen] = useState(false);
 
   const loadVendors=()=>fetch('/api/labels/vendors').then(r => r.json()).then(setVendors);
+  const importStoreCatalog=async()=>{const response=await fetch('/api/labels/import-store-catalog',{method:'POST'});const data=await response.json();if(!response.ok){setMessage(data.message||'매장 라벨 원본을 불러오지 못했습니다.');return}sessionStorage.setItem('miyansol-store-label-catalog-v2','1');setMessage(`매장 라벨 원본 ${data.imported}개를 적용했습니다. ${data.vendors}개 매장, 상품 연결 ${data.matched}개입니다.`);await loadVendors()};
   useEffect(() => { void loadVendors(); }, []);
+  useEffect(() => { if(!sessionStorage.getItem('miyansol-store-label-catalog-v2')) void importStoreCatalog(); }, []);
   useEffect(() => { fetch(`/api/labels?vendor=${encodeURIComponent(vendor)}&search=${encodeURIComponent(search)}`).then(r => r.json()).then(setLabels); }, [vendor, search]);
 
   const majors = useMemo(() => {
