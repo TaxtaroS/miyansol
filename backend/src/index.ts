@@ -640,6 +640,36 @@ app.get("/api/labels/vendors", async (_req, res) =>
       .all(),
   ),
 );
+app.post("/api/labels/sync-product-barcodes", async (req, res, next) => {
+  try {
+    const current = (req as express.Request & { user: LoginToken }).user;
+    if (current.role !== "ADMIN") return res.status(403).json({ message: "관리자만 바코드 기준을 변경할 수 있습니다." });
+
+    const rows = (await db.prepare(
+      `SELECT l.id,l.barcode label_barcode,p.barcode product_barcode
+       FROM label_templates l
+       JOIN products p ON p.id=l.product_id
+       WHERE (l.vendor LIKE '%교보%' OR l.vendor LIKE '%영풍%') AND p.active=1`,
+    ).all()) as Array<{ id: number; label_barcode: string | null; product_barcode: string | null }>;
+    const update = db.prepare("UPDATE label_templates SET barcode=? WHERE id=?");
+    let updated = 0;
+    let alreadyCurrent = 0;
+    let missing = 0;
+
+    await db.transaction(async () => {
+      for (const row of rows) {
+        const barcode = (row.product_barcode || "").replace(/[\s-]/g, "");
+        if (!/^\d{13}$/.test(barcode)) { missing += 1; continue; }
+        if ((row.label_barcode || "").replace(/[\s-]/g, "") === barcode) { alreadyCurrent += 1; continue; }
+        await update.run(barcode, row.id);
+        updated += 1;
+      }
+    })();
+    res.json({ updated, alreadyCurrent, missing, total: rows.length });
+  } catch (error) {
+    next(error);
+  }
+});
 app.post("/api/labels/vendors", async (req, res, next) => {
   try {
     const name = z

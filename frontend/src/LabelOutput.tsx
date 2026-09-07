@@ -95,9 +95,20 @@ function templateValues(item: QueueItem) {
   } catch { return []; }
 }
 
+function normalizedBarcode(value: string | null | undefined) {
+  return (value || '').replace(/[\s-]/g, '');
+}
+
+function primaryBarcode(item: Label | QueueItem) {
+  const direct = normalizedBarcode(item.barcode);
+  if (direct) return direct;
+  return templateValues(item as QueueItem)
+    .map(normalizedBarcode)
+    .find(value => /^\d{13}$/.test(value)) || '';
+}
+
 function displayCode(item: Label) {
-  const values = templateValues(item as QueueItem);
-  return item.barcode || values.find(value => /^[A-Z0-9-]{6,}$/i.test(value)) || '';
+  return primaryBarcode(item);
 }
 
 function displayProductName(item: Label) {
@@ -119,10 +130,13 @@ function labelMarkup(item: QueueItem, copy: number) {
   const values = templateValues(item);
   const name = escapeHtml(item.product_name);
   const kind = vendorKind(item.vendor);
+  const barcode = primaryBarcode(item);
   const first = escapeHtml(values[0] || item.product_name);
-  const second = escapeHtml(values[1] || item.barcode || '');
+  const second = escapeHtml(barcode);
   const third = escapeHtml(values[2] || '');
-  if (kind === 'retail') return `<article class="label retail" data-copy="${copy}"><div class="retail-title" style="font-size:${fitFont(values[0] || item.product_name,7.1,4.3,19)}pt">${first}</div><div class="retail-price" style="font-size:${fitFont(values[2] || '',7,4.8,19)}pt">${third}</div><div class="retail-bars">${barcodeSvg(values[1] || item.barcode || '',{format:'CODE128',fontSize:16,height:60,width:1.7})}</div></article>`;
+  // 교보·영풍은 셀메이트와 같은 13자리 상품 바코드(EAN-13)를 사용한다.
+  // 템플릿 보조값보다 상품의 기준 바코드를 우선해 화면·인쇄·스캔 값을 일치시킨다.
+  if (kind === 'retail') return `<article class="label retail" data-copy="${copy}"><div class="retail-title" style="font-size:${fitFont(values[0] || item.product_name,7.1,4.3,19)}pt">${first}</div><div class="retail-price" style="font-size:${fitFont(values[2] || '',7,4.8,19)}pt">${third}</div><div class="retail-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:60,width:1.7})}</div></article>`;
   if (kind === 'shilla') return `<article class="label shilla" data-copy="${copy}"><div class="shilla-code" style="font-size:${fitFont(values[1] || '',10.2,7.2,12.5)}pt">${second}</div><div class="shilla-title" style="font-size:${fitFont(values[0] || item.product_name,5.8,3.7,31)}pt">${first}</div><div class="shilla-bars">${barcodeSvg(values[1] || '',{fontSize:17,height:68,width:2})}</div></article>`;
   if (kind === 'shinsegae') return `<article class="label shinsegae" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',10.5,6.2,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.6,3.8,15)}pt">${first}</div></article>`;
   if (kind === 'lotte') return `<article class="label lotte" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',11.5,6.5,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.5,3.9,28)}pt">${first}</div></article>`;
@@ -171,6 +185,7 @@ export default function LabelOutput() {
   const samplePath = vendorSamples[vendor];
   const addLabelVendor=async()=>{const name=window.prompt('추가할 라벨 공급처명을 입력해 주세요.','');if(!name?.trim())return;const response=await fetch('/api/labels/vendors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim()})});const data=await response.json();setMessage(response.ok?'라벨 공급처를 추가했습니다.':data.message);if(response.ok){await loadVendors();setVendor(data.vendor);setMajor('');setProduct('')}};
   const editLabelVendor=async()=>{const selected=vendors.find(item=>item.vendor===vendor);if(!selected){setMessage('수정할 라벨 공급처를 먼저 선택해 주세요.');return}const name=window.prompt('라벨 공급처명을 수정해 주세요.',selected.vendor);if(!name?.trim()||name.trim()===selected.vendor)return;const response=await fetch(`/api/labels/vendors/${selected.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim()})});const data=await response.json();setMessage(response.ok?'라벨 공급처명을 수정했습니다.':data.message);if(response.ok){setVendor(data.vendor);setMajor('');setProduct('');await loadVendors()}};
+  const syncRetailBarcodes=async()=>{const response=await fetch('/api/labels/sync-product-barcodes',{method:'POST'});const data=await response.json();if(!response.ok){setMessage(data.message||'셀메이트 바코드 동기화에 실패했습니다.');return}setMessage(`셀메이트 기준으로 ${data.updated}개를 교체했습니다. 이미 일치 ${data.alreadyCurrent}개, 확인 필요 ${data.missing}개입니다.`);await loadVendors();const refreshed=await fetch(`/api/labels?vendor=${encodeURIComponent(vendor)}&search=${encodeURIComponent(search)}`);setLabels(await refreshed.json())};
 
   const add = (label: Label) => setQueue(current => {
     const found = current.find(item => item.id === label.id);
@@ -190,7 +205,7 @@ export default function LabelOutput() {
       <p>공급처를 먼저 선택하고 대분류, 상품 순서로 좁혀 인쇄 대기목록에 추가하세요.</p>
       <div className="barcode-filter-grid">
         <strong>공급처 선택</strong>
-        <div className="label-vendor-control"><select value={vendor} onChange={e=>{setVendor(e.target.value);setMajor('');setProduct('')}}><option value="">전체 공급처</option>{vendors.map(item=><option value={item.vendor} key={item.id}>{item.vendor} ({item.count})</option>)}</select><button type="button" onClick={()=>void addLabelVendor()}><Plus size={15}/> 추가</button><button type="button" onClick={()=>void editLabelVendor()} disabled={!vendor}><Pencil size={15}/> 수정</button></div>
+        <div className="label-vendor-control"><select value={vendor} onChange={e=>{setVendor(e.target.value);setMajor('');setProduct('')}}><option value="">전체 공급처</option>{vendors.map(item=><option value={item.vendor} key={item.id}>{item.vendor} ({item.count})</option>)}</select><button type="button" onClick={()=>void addLabelVendor()}><Plus size={15}/> 추가</button><button type="button" onClick={()=>void editLabelVendor()} disabled={!vendor}><Pencil size={15}/> 수정</button>{(vendor.includes('교보')||vendor.includes('영풍'))&&<button type="button" className="primary" onClick={()=>void syncRetailBarcodes()}>셀메이트 코드 적용</button>}</div>
         <strong>대분류</strong>
         <select value={major} onChange={e=>{setMajor(e.target.value);setProduct('')}}><option value="">전체 대분류</option>{majors.map(value=><option key={value}>{value}</option>)}</select>
         <strong>상품</strong>
