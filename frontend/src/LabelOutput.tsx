@@ -17,11 +17,14 @@ const vendorSamples: Record<string,string> = {
   '신세계_온라인_명동점_인천공항_라벨':'/uploads/label-samples/shinsegae-online.png',
   '신세계온라인 샘플라벨':'/uploads/label-samples/shinsegae-online.png',
   '교보영풍':'/uploads/label-samples/kyobo-youngpoong.png',
-  '롯데_온라인 라벨':'/uploads/label-samples/lotte-online.png',
+  '롯데_온라인':'/uploads/label-samples/lotte-online.png',
   '면세점_제주_부산_부산항_용두산_김해라벨':'/uploads/label-samples/duty-free.png',
 };
 
 function majorCategory(label: Label) {
+  // Lotte's folders are its own category master. Do not mix them with the
+  // dashboard categories used by Sellmate and Kyobo/Youngpoong.
+  if (label.vendor === '롯데_온라인') return label.category.trim() || '기타';
   if (label.product_id && label.dashboard_name) {
     return dashboardMajorCategory({name:label.dashboard_name,catalog_name:label.catalog_name || undefined});
   }
@@ -87,7 +90,7 @@ function vendorKind(vendor: string) {
   return 'standard';
 }
 
-function templateValues(item: QueueItem) {
+function templateValues(item: Label | QueueItem) {
   if (Array.isArray(item.template_data)) return item.template_data.map(String);
   try {
     const values = JSON.parse(item.template_data || '[]');
@@ -110,11 +113,20 @@ function primaryBarcode(item: Label | QueueItem) {
     .find(value => /^\d{13}$/.test(value)) || '';
 }
 
+function lotteLabelValues(item: Label | QueueItem) {
+  const values = templateValues(item).map(value => value.trim()).filter(Boolean);
+  const code = values.find(value => /^\d{10}$/.test(normalizedBarcode(value))) || '';
+  const name = values.find(value => value !== code) || item.product_name;
+  return {code: normalizedBarcode(code), name};
+}
+
 function displayCode(item: Label) {
+  if (vendorKind(item.vendor) === 'lotte') return lotteLabelValues(item).code;
   return primaryBarcode(item);
 }
 
 function displayProductName(item: Label) {
+  if (vendorKind(item.vendor) === 'lotte') return lotteLabelValues(item).name;
   if (item.dashboard_name) return item.dashboard_name;
   const size = /^[ls]$/i.test(item.category.trim()) ? item.category.trim().toUpperCase() : '';
   return size && !new RegExp(`\\s${size}$`, 'i').test(item.product_name) ? `${item.product_name} ${size}` : item.product_name;
@@ -131,7 +143,7 @@ function fitFont(value: string, maximum: number, minimum: number, capacity: numb
 }
 
 function RetailLiveSample({item,large=false}:{item:Label;large?:boolean}) {
-  const values = templateValues(item as QueueItem);
+  const values = templateValues(item);
   const barcode = primaryBarcode(item);
   return <div className={`retail-live-sample${large?' large':''}`}>
     <div className="retail-live-name">[미야앤솔] {displayProductName(item)}</div>
@@ -155,7 +167,10 @@ function labelMarkup(item: QueueItem, copy: number) {
   if (kind === 'retail') return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand" style="font-size:${fitFont(`[미야앤솔] ${displayProductName(item)}`,7.3,4.5,23)}pt">[미야앤솔] ${name}</div><div class="standard-title" style="font-size:${fitFont(values[2] || '',6.2,4.5,20)}pt">${third}</div><div class="standard-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:54,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
   if (kind === 'shilla') return `<article class="label shilla" data-copy="${copy}"><div class="shilla-code" style="font-size:${fitFont(values[1] || '',10.2,7.2,12.5)}pt">${second}</div><div class="shilla-title" style="font-size:${fitFont(values[0] || item.product_name,5.8,3.7,31)}pt">${first}</div><div class="shilla-bars">${barcodeSvg(values[1] || '',{fontSize:17,height:68,width:2})}</div></article>`;
   if (kind === 'shinsegae') return `<article class="label shinsegae" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',10.5,6.2,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.6,3.8,15)}pt">${first}</div></article>`;
-  if (kind === 'lotte') return `<article class="label lotte" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',11.5,6.5,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.5,3.9,28)}pt">${first}</div></article>`;
+  if (kind === 'lotte') {
+    const lotte = lotteLabelValues(item);
+    return `<article class="label lotte" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(lotte.code,11.5,6.5,9)}pt">${escapeHtml(lotte.code)}</div><div class="plain-title" style="font-size:${fitFont(lotte.name,6.5,3.9,28)}pt">${escapeHtml(lotte.name)}</div></article>`;
+  }
   if (kind === 'export') return `<article class="label export" data-copy="${copy}"><div class="export-brand">${first}</div><div class="export-title">${second}</div><div class="export-code">${third}</div></article>`;
   if (kind === 'dutyfree') return `<article class="label dutyfree" data-copy="${copy}"><div class="dutyfree-title">${first}</div></article>`;
   return `<article class="label standard" data-copy="${copy}"><div class="standard-brand">[miyansol]</div><div class="standard-title">${name}</div><div class="standard-bars">${barcodeSvg(item.barcode || '')}</div></article>`;
