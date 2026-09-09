@@ -9,11 +9,12 @@ type Label = { id: number; vendor: string; category: string; product_name: strin
 type QueueItem = Label & { quantity: number };
 
 const categoryOrder: readonly string[] = majorOrder;
+const SHILLA_VENDOR = '신라_온라인_제주점_라벨';
 const vendorSamples: Record<string,string> = {
   '셀메이트':'/uploads/label-samples/sellmate.png',
   '영풍 이요샵':'/uploads/label-samples/youngpoong-eyoshop.png',
   '중국_미국라벨':'/uploads/label-samples/china-usa-export.png',
-  '신라_온라인_제주점_라벨':'/uploads/label-samples/shilla-online-jeju.png',
+  [SHILLA_VENDOR]:'/uploads/label-samples/shilla-online-jeju.png',
   '신세계_온라인_명동점_인천공항_라벨':'/uploads/label-samples/shinsegae-online.png',
   '신세계온라인 샘플라벨':'/uploads/label-samples/shinsegae-online.png',
   '교보영풍':'/uploads/label-samples/kyobo-youngpoong.png',
@@ -27,6 +28,8 @@ function majorCategory(label: Label) {
   if (label.vendor === '롯데_온라인') return label.category.trim() || '기타';
   // Duty-free labels use the first UniLabel folder as their major category.
   if (label.vendor === '면세점_제주_부산_부산항_용두산_김해라벨') return label.category.split('/')[0].trim() || '기타';
+  // Shilla's UniLabel folders are an independent category master.
+  if (label.vendor === SHILLA_VENDOR) return label.category.trim() || '기타';
   if (label.product_id && label.dashboard_name) {
     return dashboardMajorCategory({name:label.dashboard_name,catalog_name:label.catalog_name || undefined});
   }
@@ -122,12 +125,21 @@ function lotteLabelValues(item: Label | QueueItem) {
   return {code: normalizedBarcode(code), name};
 }
 
+function shillaLabelValues(item: Label | QueueItem) {
+  const values = templateValues(item).map(value => value.trim()).filter(Boolean);
+  const code = values.find(value => /^\d{12}$/.test(normalizedBarcode(value))) || '';
+  const name = values.find(value => normalizedBarcode(value) !== normalizedBarcode(code)) || item.product_name;
+  return {code: normalizedBarcode(code), name};
+}
+
 function displayCode(item: Label) {
+  if (item.vendor === SHILLA_VENDOR) return shillaLabelValues(item).code;
   if (vendorKind(item.vendor) === 'lotte') return lotteLabelValues(item).code;
   return primaryBarcode(item);
 }
 
 function displayProductName(item: Label) {
+  if (item.vendor === SHILLA_VENDOR) return shillaLabelValues(item).name;
   if (vendorKind(item.vendor) === 'lotte') return lotteLabelValues(item).name;
   if (vendorKind(item.vendor) === 'dutyfree') return templateValues(item)[0]?.trim() || item.product_name;
   if (item.dashboard_name) return item.dashboard_name;
@@ -168,7 +180,10 @@ function labelMarkup(item: QueueItem, copy: number) {
   if (item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand">[miyansol]&nbsp; ${escapeHtml(values[0] || '')}</div><div class="standard-title">${escapeHtml(values[1] || item.product_name)}</div><div class="standard-bars">${barcodeSvg(barcode,{format:'CODE128',fontSize:18,height:50,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
   // Kyobo/Youngpoong remains a separate price-label format.
   if (kind === 'retail') return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand" style="font-size:${fitFont(`[미야앤솔] ${displayProductName(item)}`,7.3,4.5,23)}pt">[미야앤솔] ${name}</div><div class="standard-title" style="font-size:${fitFont(values[2] || '',6.2,4.5,20)}pt">${third}</div><div class="standard-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:54,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
-  if (kind === 'shilla') return `<article class="label shilla" data-copy="${copy}"><div class="shilla-code" style="font-size:${fitFont(values[1] || '',10.2,7.2,12.5)}pt">${second}</div><div class="shilla-title" style="font-size:${fitFont(values[0] || item.product_name,5.8,3.7,31)}pt">${first}</div><div class="shilla-bars">${barcodeSvg(values[1] || '',{fontSize:17,height:68,width:2})}</div></article>`;
+  if (item.vendor === SHILLA_VENDOR) {
+    const shilla = shillaLabelValues(item);
+    return `<article class="label shilla" data-copy="${copy}"><div class="shilla-code">${escapeHtml(shilla.code)}</div><div class="shilla-title" style="font-size:${fitFont(shilla.name,10,5.8,31)}pt">${escapeHtml(shilla.name)}</div><div class="shilla-bars">${barcodeSvg(shilla.code,{format:'CODE128',fontSize:28,height:70,width:2,font:'Gulim',fontOptions:''})}</div></article>`;
+  }
   if (kind === 'shinsegae') return `<article class="label shinsegae" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(values[1] || '',10.5,6.2,9)}pt">${second}</div><div class="plain-title" style="font-size:${fitFont(values[0] || item.product_name,6.6,3.8,15)}pt">${first}</div></article>`;
   if (kind === 'lotte') {
     const lotte = lotteLabelValues(item);
@@ -186,7 +201,7 @@ function printQueueDocument(queue: QueueItem[]) {
   if (!popup) return false;
   popup.document.open();
   popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>MIYANSOL 라벨 일괄출력</title><style>
-    *{box-sizing:border-box}html,body{margin:0;background:#eee;font-family:Arial,'Malgun Gothic',sans-serif}.label{position:relative;width:40mm;height:20mm;padding:.35mm .25mm;background:#fff;color:#000;overflow:hidden;break-after:page;page-break-after:always;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.label:last-child{break-after:auto;page-break-after:auto}.label>div{width:100%;white-space:nowrap;overflow:hidden;text-overflow:clip}.no-barcode{font-size:5pt}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.shilla{justify-content:flex-start;padding:.15mm .25mm 0}.shilla-code{height:3.9mm;font-weight:700;line-height:3.9mm;letter-spacing:-.12mm}.shilla-title{height:2.7mm;font-weight:500;line-height:2.7mm;letter-spacing:-.14mm}.shilla-bars{height:13.1mm;width:100%;overflow:visible}.shilla-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.plain-code,.plain-title{padding:0;line-height:1.08}.plain-code{font-weight:700}.lotte{gap:2.3mm}.lotte .plain-title{font-weight:700;letter-spacing:-.13mm}.shinsegae{gap:2.1mm}.shinsegae .plain-title{font-weight:500;letter-spacing:-.12mm}.export{gap:1.25mm}.export-brand{font-size:9.4pt;font-weight:700}.export-title{font-size:5.4pt;font-weight:700;letter-spacing:-.12mm}.export-code{font-size:9.2pt;font-weight:700}.dutyfree{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.dutyfree .dutyfree-title{position:absolute;left:3.8660936mm;top:8mm;width:31.280787mm;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-size:10pt;font-weight:400;font-style:normal;line-height:1;letter-spacing:0;text-align:center}.standard-brand{font-size:7.3pt;font-weight:700}.standard-title{font-size:5.5pt;font-weight:700;letter-spacing:-.12mm}.standard-bars{height:10.8mm;width:100%}.standard-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}@media screen{body{padding:10mm}.label{margin:0 auto 28mm;box-shadow:0 2px 12px #0002;transform:scale(2);transform-origin:top center}}@media print{html,body{background:#fff}.label{margin:0;box-shadow:none}@page{size:40mm 20mm;margin:0}}
+    *{box-sizing:border-box}html,body{margin:0;background:#eee;font-family:Arial,'Malgun Gothic',sans-serif}.label{position:relative;width:40mm;height:20mm;padding:.35mm .25mm;background:#fff;color:#000;overflow:hidden;break-after:page;page-break-after:always;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.label:last-child{break-after:auto;page-break-after:auto}.label>div{width:100%;white-space:nowrap;overflow:hidden;text-overflow:clip}.no-barcode{font-size:5pt}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.shilla{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.shilla-code{position:absolute;left:4.755975mm;top:1mm;width:30.530046mm!important;height:4.2541866mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-size:10pt;font-weight:700;line-height:1;letter-spacing:0}.shilla-title{position:absolute;left:4.368764mm;top:5mm;width:31.280787mm!important;height:3.1280785mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:700;line-height:1;letter-spacing:0}.shilla-bars{position:absolute;left:2.4827213mm;top:8mm;width:35.03448mm!important;height:10.6mm;overflow:visible!important}.shilla-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.plain-code,.plain-title{padding:0;line-height:1.08}.plain-code{font-weight:700}.lotte{gap:2.3mm}.lotte .plain-title{font-weight:700;letter-spacing:-.13mm}.shinsegae{gap:2.1mm}.shinsegae .plain-title{font-weight:500;letter-spacing:-.12mm}.export{gap:1.25mm}.export-brand{font-size:9.4pt;font-weight:700}.export-title{font-size:5.4pt;font-weight:700;letter-spacing:-.12mm}.export-code{font-size:9.2pt;font-weight:700}.dutyfree{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.dutyfree .dutyfree-title{position:absolute;left:3.8660936mm;top:8mm;width:31.280787mm;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-size:10pt;font-weight:400;font-style:normal;line-height:1;letter-spacing:0;text-align:center}.standard-brand{font-size:7.3pt;font-weight:700}.standard-title{font-size:5.5pt;font-weight:700;letter-spacing:-.12mm}.standard-bars{height:10.8mm;width:100%}.standard-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}@media screen{body{padding:10mm}.label{margin:0 auto 28mm;box-shadow:0 2px 12px #0002;transform:scale(2);transform-origin:top center}}@media print{html,body{background:#fff}.label{margin:0;box-shadow:none}@page{size:40mm 20mm;margin:0}}
    .retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;font-weight:700;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;font-weight:700;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{overflow:visible}.lotte{padding-left:.08mm;padding-right:.08mm}.lotte .plain-title{width:100%;max-width:none;letter-spacing:-.18mm}.sellmate{justify-content:flex-start;padding:.35mm 1.75mm 1.1mm;font-family:Arial,'Malgun Gothic',sans-serif}.sellmate .standard-brand{height:3.45mm;line-height:3.45mm;font-size:8.05pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:3.65mm;line-height:3.65mm;font-size:7.15pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:10.2mm;padding:0 .25mm;overflow:hidden}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.08mm;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}
     @media screen{.label.sellmate{width:377px;height:194px;transform:none;padding:5px 18px 11px;margin:0 auto 20px}.sellmate .standard-brand{height:34px;line-height:34px;font-size:33px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:36px;line-height:36px;font-size:32px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:91px;padding:0 3px}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.6px;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}}
   </style></head><body>${pages}<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
