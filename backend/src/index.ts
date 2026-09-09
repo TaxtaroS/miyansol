@@ -623,6 +623,21 @@ app.get("/api/movements", async (req, res) =>
 app.get("/api/labels", async (req, res) => {
   const search = `%${String(req.query.search || "")}%`;
   const vendor = String(req.query.vendor || "");
+  // Youngpoong display labels always mirror the current Sellmate catalog.
+  // Returning them from the live Sellmate source prevents partial store-file
+  // imports from dropping newer products or retaining retired barcodes.
+  if (vendor === "영풍 이요샵") {
+    return res.json(
+      await db.prepare(
+        `SELECT -l.id id,? vendor,l.category,l.product_name,l.barcode,l.template_data,l.product_id,p.image_path,p.name dashboard_name,p.catalog_name
+         FROM label_templates l
+         LEFT JOIN products p ON p.id=l.product_id
+         WHERE l.vendor='셀메이트' AND (p.id IS NULL OR p.active=1)
+           AND (l.product_name LIKE ? OR l.barcode LIKE ?)
+         ORDER BY l.category,l.product_name LIMIT 5000`,
+      ).all(vendor, search, search),
+    );
+  }
   res.json(
     await db
       .prepare(
@@ -631,15 +646,15 @@ app.get("/api/labels", async (req, res) => {
       .all(vendor, vendor, search, search),
   );
 });
-app.get("/api/labels/vendors", async (_req, res) =>
-  res.json(
-    await db
-      .prepare(
-        "SELECT v.id,v.name vendor,COUNT(l.id) count FROM label_vendors v LEFT JOIN label_templates l ON l.vendor=v.name WHERE v.active=1 GROUP BY v.id,v.name ORDER BY v.name COLLATE NOCASE",
-      )
-      .all(),
-  ),
-);
+app.get("/api/labels/vendors", async (_req, res) => {
+  const vendors = (await db.prepare(
+    "SELECT v.id,v.name vendor,COUNT(l.id) count FROM label_vendors v LEFT JOIN label_templates l ON l.vendor=v.name WHERE v.active=1 GROUP BY v.id,v.name ORDER BY v.name COLLATE NOCASE",
+  ).all()) as Array<{id:number;vendor:string;count:number}>;
+  const sellmate = (await db.prepare(
+    "SELECT COUNT(l.id) count FROM label_templates l LEFT JOIN products p ON p.id=l.product_id WHERE l.vendor='셀메이트' AND (p.id IS NULL OR p.active=1)",
+  ).get()) as {count:number};
+  res.json(vendors.map(item => item.vendor === "영풍 이요샵" ? {...item,count:sellmate.count} : item));
+});
 app.post("/api/labels/import-store-catalog", async (req, res, next) => {
   try {
     const current = (req as express.Request & { user: LoginToken }).user;

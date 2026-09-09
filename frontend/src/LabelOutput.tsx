@@ -8,9 +8,10 @@ type Vendor = { id: number; vendor: string; count: number };
 type Label = { id: number; vendor: string; category: string; product_name: string; barcode: string | null; image_path: string | null; template_data: string | string[] | null; product_id: number | null; dashboard_name: string | null; catalog_name: string | null };
 type QueueItem = Label & { quantity: number };
 
-const categoryOrder: readonly string[] = majorOrder;
+const categoryOrder: readonly string[] = majorOrder.flatMap(value => value === '만두백' ? [value,'듀얼백'] : value === '피어백' ? [value,'피어미니백'] : [value]);
 const SHILLA_VENDOR = '신라_온라인_제주점_라벨';
 const SHINSEGAE_VENDOR = '신세계_온라인_명동점_인천공항_라벨';
+const YOUNGPOONG_VENDOR = '영풍 이요샵';
 const vendorSamples: Record<string,string> = {
   '셀메이트':'/uploads/label-samples/sellmate.png',
   '영풍 이요샵':'/uploads/label-samples/youngpoong-eyoshop.png',
@@ -33,6 +34,7 @@ function majorCategory(label: Label) {
   if (label.vendor === SHILLA_VENDOR) return label.category.trim() || '기타';
   // Shinsegae Myeongdong/Airport labels keep their UniLabel folder names.
   if (label.vendor === SHINSEGAE_VENDOR) return label.category.trim() || '기타';
+  if (label.vendor === YOUNGPOONG_VENDOR) return youngpoongMajorCategory(label);
   if (label.product_id && label.dashboard_name) {
     return dashboardMajorCategory({name:label.dashboard_name,catalog_name:label.catalog_name || undefined});
   }
@@ -106,6 +108,64 @@ function templateValues(item: Label | QueueItem) {
   } catch { return []; }
 }
 
+function youngpoongMajorCategory(item: Label | QueueItem) {
+  const source = [item.category,item.product_name,item.dashboard_name,item.catalog_name,...templateValues(item)].filter(Boolean).join(' ').toLowerCase().replace(/\s/g,'');
+  if (source.includes('basicbag') || source.includes('기본백')) return '기본백';
+  if (source.includes('minibag') || source.includes('미니백')) return '미니백';
+  if (source.includes('heartbag') || source.includes('하트백')) return '하트백';
+  if (source.includes('pierbagmini') || source.includes('minipier') || source.includes('미니피어')) return '피어미니백';
+  if (source.includes('pierbag') || source.includes('피어백')) return '피어백';
+  if (source.includes('lagoon') || source.includes('라군')) return '라군 빅백';
+  if (source.includes('accordion') || source.includes('아코디언')) return '아코디언백';
+  if (source.includes('brick') || source.includes('브릭')) return '브릭백';
+  if (source.includes('memory') || source.includes('메모리')) return '메모리백';
+  if (source.includes('dualbag') || source.includes('듀얼백')) return '듀얼백';
+  if (source.includes('minipouch') || source.includes('미니파우치')) return '미니 파우치';
+  if (source.includes('quiltingpouch') || source.includes('퀼팅') || source.includes('퀄팅')) return '퀼팅 파우치';
+  if (source.includes('square3pouch') || source.includes('스퀘어3')) return '스퀘어 3파우치';
+  if (source.includes('squarepoucha') || source.includes('스퀘어파우치a')) return '스퀘어 파우치 A';
+  if (source.includes('squarepouchb') || source.includes('스퀘어파우치b')) return '스퀘어 파우치 B';
+  if (source.includes('mandubag') || source.includes('만두백')) return '만두백';
+  if (source.includes('hopimink') || source.includes('leopardbag') || source.includes('호피백')) return '호피백';
+  if (source.includes('minkbag') || source.includes('밍크백')) return '밍크백';
+  if (source.includes('uggbag') || source.includes('어그백')) return '어그백';
+  if (source.includes('meongmi') || source.includes('멍미')) return '멍미참';
+  if (source.includes('flowerkey') || source.includes('플라워키') || source.includes('꽃키')) return '플라워키';
+  if (source.includes('flowercharm') || source.includes('꽃참')) return '꽃참';
+  if (source.includes('heartcharm') || source.includes('하트참')) return '하트참';
+  if (source.includes('towelcharm') || source.includes('타월참') || source.includes('타올참')) return '타월참';
+  if (source.includes('luckycharm') || source.includes('럭키참')) return '럭키참';
+  if (source.includes('minicharm') || source.includes('미니구슬') || source.includes('미니참')) return '미니참';
+  if (source.includes('longcharm') || source.includes('롱구슬') || source.includes('롱참')) return '롱참';
+  if (source.includes('ropestrap') || source.includes('로프스트랩')) return '로프 스트랩';
+  if (source.includes('hpstrap') || source.includes('핸드폰스트랩')) return '핸드폰 스트랩';
+  if (source.includes('solcharm') || source.includes('솔참') || source.includes('술참')) return '솔참';
+  if (source.includes('teolsil') || source.includes('털실')) return '털실폼폼';
+  if (source.includes('ropecharm') || source.includes('로프참')) return '로프참';
+  return '기타';
+}
+
+const youngpoongPrices: Record<string,number> = {
+  '미니백':64000,'메모리백':139000,'하트백':98000,'만두백':119000,'듀얼백':149000,'아코디언백':168000,
+  '호피백':139000,'미니 파우치':14000,'퀼팅 파우치':35000,'스퀘어 파우치 A':29000,'스퀘어 파우치 B':58000,
+  '스퀘어 3파우치':119000,'라군 빅백':168000,'피어백':159000,'피어미니백':149000,'브릭백':129000,
+  '꽃참':19000,'플라워키':19000,'롱참':26000,'미니참':26000,'로프참':29000,'털실폼폼':29000,
+  '타월참':19000,'하트참':19000,'럭키참':26000,'솔참':32000,'핸드폰 스트랩':43000,'멍미참':43000,'로프 스트랩':30000,
+};
+
+function retailPriceText(item: Label | QueueItem) {
+  const stored = templateValues(item)[2]?.trim();
+  if (item.vendor !== YOUNGPOONG_VENDOR) return stored || '판매가격 확인 필요';
+  const major = youngpoongMajorCategory(item);
+  const source = [item.product_name,item.dashboard_name,item.catalog_name,...templateValues(item)].filter(Boolean).join(' ');
+  const size = source.match(/(?:^|\s)([LMS])(?:\s|$)/i)?.[1]?.toUpperCase();
+  const price = major === '기본백' ? (size === 'L' ? 56000 : 54000)
+    : major === '어그백' ? (size === 'L' ? 139000 : 129000)
+    : major === '밍크백' ? (size === 'L' ? 149000 : 139000)
+    : youngpoongPrices[major];
+  return price ? `판매가격 : ${price.toLocaleString('ko-KR')}` : '판매가격 확인 필요';
+}
+
 function normalizedBarcode(value: string | null | undefined) {
   return (value || '').replace(/[\s-]/g, '');
 }
@@ -171,11 +231,10 @@ function fitFont(value: string, maximum: number, minimum: number, capacity: numb
 }
 
 function RetailLiveSample({item,large=false}:{item:Label;large?:boolean}) {
-  const values = templateValues(item);
   const barcode = primaryBarcode(item);
   return <div className={`retail-live-sample${large?' large':''}`}>
     <div className="retail-live-name">[미야앤솔] {displayProductName(item)}</div>
-    <div className="retail-live-price">{values[2] || '판매가격 확인 필요'}</div>
+    <div className="retail-live-price">{retailPriceText(item)}</div>
     <div className="retail-live-bars" dangerouslySetInnerHTML={{__html:barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:54,width:1.55})}} />
   </div>;
 }
@@ -187,7 +246,7 @@ function labelMarkup(item: QueueItem, copy: number) {
   const barcode = primaryBarcode(item);
   const first = escapeHtml(values[0] || displayProductName(item));
   const second = escapeHtml(barcode);
-  const third = escapeHtml(values[2] || '판매가격 확인 필요');
+  const third = escapeHtml(retailPriceText(item));
   // Sellmate 88-code label: supplier code, original English product name and
   // CODE128 bars must retain the exact 40×20 layout used in Sellmate.
   if (item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand">[miyansol]&nbsp; ${escapeHtml(values[0] || '')}</div><div class="standard-title">${escapeHtml(values[1] || item.product_name)}</div><div class="standard-bars">${barcodeSvg(barcode,{format:'CODE128',fontSize:18,height:50,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
