@@ -21,18 +21,12 @@ export async function analyzeOrderFile(
   let extracted: { raw: string; rows: ParsedOrderRow[] } | undefined;
   try {
     const gemini = await readOrderWithGemini(file);
-    if (gemini) {
-      extracted = gemini;
-      engine = "gemini-vision+alias-matcher";
-    }
+    if (gemini) { extracted = gemini; engine = "gemini-vision+alias-matcher"; }
   } catch (error) {
-    console.error(JSON.stringify({
-      level: "error",
-      message: "Gemini order reading failed; using OCR fallback",
-      filename: file.originalname,
-      error: error instanceof Error ? error.message : String(error),
-    }));
-    if (process.env.GEMINI_API_KEY?.trim()) throw error;
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new Error("문서 분석 시간이 초과되었습니다. 원본은 저장되어 있으니 다시 분석해 주세요. 반복되면 페이지를 나누어 올려 주세요.");
+    }
+    throw error;
   }
   if (!extracted && supplied) {
     extracted = { raw: suppliedText, rows: rowsFromText(suppliedText) };
@@ -42,6 +36,7 @@ export async function analyzeOrderFile(
     extracted = await readOrderFile(file);
     engine = "ocr-fallback+alias-matcher";
   }
+  if (!extracted.rows.length) throw new Error("출고 품목을 찾지 못했습니다. 원본을 확인하거나 품목을 직접 추가해 주세요.");
   const items: AnalyzedOrderItem[] = extracted.rows.map(row => {
     const matched = matchProduct(row.name, products);
     return {

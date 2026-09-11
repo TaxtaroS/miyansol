@@ -6,6 +6,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test tests/*.test.cjs",
     "import-catalog": "tsx scripts/import-catalog.ts",
     "migrate:neon": "tsx scripts/migrate-to-neon.ts"
   },

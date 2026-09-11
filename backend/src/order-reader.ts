@@ -140,7 +140,7 @@ function similarity(a:string,b:string){if(a===b)return 1;if(!a||!b)return 0;if(a
 
 export function normalizeAlias(value:string){return normalized(value)}
 export function matchProduct(name:string,products:Array<{id:number;name:string;catalog_name?:string|null;sku:string;aliases?:string|null}>) {
-  const source=normalized(name);let best:{id:number;score:number}|null=null;
-  for(const product of products){const sku=normalized(product.sku);const skuMatch=sku.length>=4&&source.includes(sku)?.99:0;const aliasScore=(product.aliases||'').split('|||').filter(Boolean).reduce((score,alias)=>Math.max(score,similarity(source,normalized(alias))),0);const score=Math.max(skuMatch,aliasScore,similarity(source,normalized(product.name)),similarity(source,normalized(product.catalog_name||'')),similarity(source,sku));if(!best||score>best.score)best={id:product.id,score}}
-  return best&&best.score>=.72?best:null;
+  const source=normalized(name);let best:{id:number;score:number}|null=null;let runnerUp=0;
+  for(const product of products){const sku=normalized(product.sku);const skuMatch=sku.length>=4&&source.includes(sku)?.99:0;const aliasScore=(product.aliases||'').split('|||').filter(Boolean).reduce((score,alias)=>Math.max(score,similarity(source,normalized(alias))),0);const score=Math.max(skuMatch,aliasScore,similarity(source,normalized(product.name)),similarity(source,normalized(product.catalog_name||'')),similarity(source,sku));if(!best||score>best.score){runnerUp=best?.score||0;best={id:product.id,score}}else{runnerUp=Math.max(runnerUp,score)}}
+  return best&&best.score>=.72&&best.score-runnerUp>=.05?best:null;
 }

@@ -11,12 +11,15 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { normalizeAlias } from "./order-reader";
 import { analyzeOrderFile } from "./order-analysis-service";
+import { createAsyncSqliteDatabase } from "./async-sqlite";
+import { loadOrderCatalog } from "./order-catalog";
+import { renderOrderDocument } from "./order-document";
 
 // Vercel uses Neon through DATABASE_URL. A fresh local checkout works without
 // secrets by falling back to the bundled SQLite database.
-const { db } = process.env.DATABASE_URL
-  ? require("./neon-db")
-  : require("./db");
+const db = process.env.DATABASE_URL
+  ? require("./neon-db").db
+  : createAsyncSqliteDatabase(require("./db").db);
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
@@ -906,19 +909,25 @@ app.post(
 );
 app.post("/api/order-imports/:id/analyze", async (req, res, next) => {
   try {
-    const order = (await db.prepare("SELECT id,filename,file_type,file_data,raw_text FROM order_imports WHERE id=?").get(req.params.id)) as {id:number;filename:string;file_type:string;file_data:Buffer|null;raw_text:string}|undefined;
+    const order = (await db.prepare("SELECT id,filename,file_type,file_data,raw_text,status FROM order_imports WHERE id=?").get(req.params.id)) as {id:number;filename:string;file_type:string;file_data:Buffer|null;raw_text:string;status:string}|undefined;
     if (!order?.file_data) return res.status(404).json({message:"분석할 주문서 원본을 찾을 수 없습니다."});
-    const products = (await db.prepare(`SELECT p.id,p.name,p.catalog_name,p.sku,(SELECT STRING_AGG(value,'|||') FROM (SELECT a.alias value FROM product_aliases a WHERE a.product_id=p.id UNION ALL SELECT l.product_name FROM label_templates l WHERE l.product_id=p.id UNION ALL SELECT l.barcode FROM label_templates l WHERE l.product_id=p.id AND l.barcode IS NOT NULL UNION ALL SELECT j.value FROM label_templates l CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(l.template_data)='array' THEN l.template_data ELSE '[]'::jsonb END) j(value) WHERE l.product_id=p.id) alias_values) aliases FROM products p WHERE p.active=TRUE`).all()) as Array<{id:number;name:string;catalog_name:string|null;sku:string;aliases:string|null}>;
+    if (order.status === "COMMITTED") return res.status(409).json({message:"이미 출고한 주문서는 다시 분석할 수 없습니다."});
+    const products = await loadOrderCatalog(db);
     const file={fieldname:"files",originalname:order.filename,encoding:"7bit",mimetype:order.file_type,size:order.file_data.length,buffer:order.file_data} as Express.Multer.File;
     const suppliedText=order.raw_text.startsWith("원본 주문서 등록 완료")?undefined:order.raw_text;
     const analysis=await analyzeOrderFile(file,products,suppliedText);
     await db.transaction(async()=>{
-      await db.prepare("DELETE FROM order_import_items WHERE import_id=?").run(order.id);
+      // Lock before inserting: another analysis or a manual correction may have
+      // finished while Gemini was reading. Never overwrite those saved items.
+      const claimed = await db.prepare("UPDATE order_imports SET reviewed_at=NULL WHERE id=? AND status!='COMMITTED'").run(order.id);
+      if (!claimed.changes) throw new Error("주문서가 삭제되었거나 이미 출고되었습니다.");
+      const count = await db.prepare("SELECT COUNT(*) count FROM order_import_items WHERE import_id=?").get(order.id) as {count:number};
+      if (count.count) throw new Error("이미 저장된 품목이 있습니다. 원본 확인 화면에서 검토해 주세요.");
       const insertItem=db.prepare("INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,?)");
       for(const row of analysis.items) await insertItem.run(order.id,row.sourceName,row.quantity,row.productId,row.confidence);
       await db.prepare("UPDATE order_imports SET status=?,raw_text=? WHERE id=?").run(analysis.status,analysis.rawText.slice(0,100000),order.id);
     })();
-    res.json({id:order.id,status:analysis.status,rows:analysis.extractedCount,unmatched:analysis.unmatchedCount});
+    res.json({id:order.id,status:analysis.status,rows:analysis.extractedCount,unmatched:analysis.unmatchedCount,engine:analysis.engine});
   } catch(error) {
     console.error(JSON.stringify({level:"error",message:"registered order analysis failed",importId:req.params.id,error:error instanceof Error?error.message:String(error)}));
     next(error);
@@ -989,7 +998,7 @@ app.post("/api/order-imports/manual", async (req, res, next) => {
 app.get("/api/order-imports", async (_req, res) => {
   const imports = await db
     .prepare(
-      `SELECT o.*,COUNT(i.id) item_count,COALESCE(SUM(i.quantity),0) total_quantity,SUM(CASE WHEN i.id IS NOT NULL AND i.matched_product_id IS NULL THEN 1 ELSE 0 END) unmatched_count FROM order_imports o LEFT JOIN order_import_items i ON i.import_id=o.id GROUP BY o.id ORDER BY o.id DESC`,
+      `SELECT o.id,o.vendor,o.filename,o.file_type,o.status,o.created_at,o.reviewed_at,COUNT(i.id) item_count,COALESCE(SUM(i.quantity),0) total_quantity,SUM(CASE WHEN i.id IS NOT NULL AND i.matched_product_id IS NULL THEN 1 ELSE 0 END) unmatched_count FROM order_imports o LEFT JOIN order_import_items i ON i.import_id=o.id GROUP BY o.id ORDER BY o.id DESC`,
     )
     .all();
   const items = await db
@@ -1003,7 +1012,7 @@ app.get("/api/order-imports", async (_req, res) => {
     WITH demand AS (
       SELECT i.matched_product_id,COALESCE(p.name,i.source_name) name,p.sku,
         SUM(i.quantity) quantity,COUNT(DISTINCT o.vendor) vendor_count,
-        STRING_AGG(DISTINCT o.vendor, ',') vendors
+        GROUP_CONCAT(DISTINCT o.vendor) vendors
       FROM order_import_items i
       JOIN order_imports o ON o.id=i.import_id
       LEFT JOIN products p ON p.id=i.matched_product_id
@@ -1011,9 +1020,9 @@ app.get("/api/order-imports", async (_req, res) => {
       GROUP BY i.matched_product_id,p.name,p.sku,i.source_name
     )
     SELECT d.*,COALESCE(k.quantity,0) picking_stock,COALESCE(f.quantity,0) factory_stock,
-      GREATEST(d.quantity-COALESCE(k.quantity,0),0) packing_shortage,
-      LEAST(GREATEST(d.quantity-COALESCE(k.quantity,0),0),COALESCE(f.quantity,0)) factory_transfer_needed,
-      GREATEST(d.quantity-COALESCE(k.quantity,0)-COALESCE(f.quantity,0),0) total_shortage,
+      CASE WHEN d.quantity>COALESCE(k.quantity,0) THEN d.quantity-COALESCE(k.quantity,0) ELSE 0 END packing_shortage,
+      CASE WHEN d.quantity<=COALESCE(k.quantity,0) THEN 0 WHEN d.quantity-COALESCE(k.quantity,0)<COALESCE(f.quantity,0) THEN d.quantity-COALESCE(k.quantity,0) ELSE COALESCE(f.quantity,0) END factory_transfer_needed,
+      CASE WHEN d.quantity>COALESCE(k.quantity,0)+COALESCE(f.quantity,0) THEN d.quantity-COALESCE(k.quantity,0)-COALESCE(f.quantity,0) ELSE 0 END total_shortage,
       CASE
         WHEN d.matched_product_id IS NULL THEN 'UNMATCHED'
         WHEN COALESCE(k.quantity,0)>=d.quantity THEN 'READY'
@@ -1069,18 +1078,13 @@ app.get("/api/order-imports/:id/preview", async (req, res, next) => {
     next(error);
   }
 });
-app.get("/api/order-imports/:id/reconstructed-pdf", async (req, res, next) => {
+app.get("/api/order-imports/:id/document", async (req, res, next) => {
   try {
     const order = (await db.prepare("SELECT id,vendor,filename FROM order_imports WHERE id=?").get(req.params.id)) as {id:number;vendor:string;filename:string}|undefined;
     if(!order)throw new Error("주문서를 찾을 수 없습니다.");
     const items = (await db.prepare("SELECT i.id,i.source_name,i.quantity,p.sku,p.name matched_name FROM order_import_items i LEFT JOIN products p ON p.id=i.matched_product_id WHERE i.import_id=? ORDER BY i.id").all(req.params.id)) as Array<{id:number;source_name:string;quantity:number;sku:string|null;matched_name:string|null}>;
-    const workerHost=process.env.DOCUMENT_WORKER_HOST||process.env.VERCEL_PROJECT_PRODUCTION_URL||process.env.VERCEL_URL;
-    const workerUrl=workerHost?`${workerHost.startsWith('http')?workerHost:`https://${workerHost}`}/document-api/order-preview`:`http://127.0.0.1:8000/document-api/order-preview`;
-    const response=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vendor:order.vendor,filename:order.filename,items:items.map((item,index)=>({sequence:index+1,source_name:item.source_name,quantity:item.quantity,sku:item.sku,matched_name:item.matched_name}))}),signal:AbortSignal.timeout(30000)});
-    if(!response.ok)throw new Error(`주문서 재구성에 실패했습니다 (${response.status}).`);
-    res.type("application/pdf");
-    res.setHeader("Content-Disposition",`inline; filename="reconstructed-order-${order.id}.pdf"`);
-    res.send(Buffer.from(await response.arrayBuffer()));
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(renderOrderDocument(order, items));
   }catch(error){next(error)}
 });
 app.get("/api/order-imports/:id/items", async (req, res, next) => {
@@ -1105,7 +1109,7 @@ app.patch("/api/order-imports/:id/review", async (req, res, next) => {
   try {
     const result = await db
       .prepare(
-        "UPDATE order_imports SET reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status!='COMMITTED'",
+        "UPDATE order_imports SET reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='READY' AND EXISTS (SELECT 1 FROM order_import_items WHERE import_id=order_imports.id) AND NOT EXISTS (SELECT 1 FROM order_import_items WHERE import_id=order_imports.id AND matched_product_id IS NULL)",
       )
       .run(req.params.id);
     if (!result.changes) throw new Error("확인할 주문서를 찾을 수 없습니다.");
@@ -1126,7 +1130,7 @@ app.post("/api/order-imports/:id/items", async (req, res, next) => {
     if (!product) throw new Error("선택한 상품을 찾을 수 없습니다.");
     const result = await db.prepare("INSERT INTO order_import_items(import_id,source_name,quantity,matched_product_id,confidence) VALUES(?,?,?,?,1)").run(order.id,product.name,data.quantity,product.id);
     const unmatched = (await db.prepare("SELECT COUNT(*) count FROM order_import_items WHERE import_id=? AND matched_product_id IS NULL").get(order.id) as {count:number}).count;
-    await db.prepare("UPDATE order_imports SET status=? WHERE id=?").run(unmatched ? "REVIEW" : "READY",order.id);
+    await db.prepare("UPDATE order_imports SET status=?,reviewed_at=NULL WHERE id=?").run(unmatched ? "REVIEW" : "READY",order.id);
     res.status(201).json({id:Number(result.lastInsertRowid),ok:true});
   } catch(error) {
     next(error);
@@ -1156,6 +1160,8 @@ app.patch("/api/order-import-items/:id", async (req, res, next) => {
       | undefined;
     if (!item) throw new Error("주문 품목을 찾을 수 없습니다.");
     await db.transaction(async () => {
+      const editable = await db.prepare("UPDATE order_imports SET reviewed_at=NULL WHERE id=? AND status!='COMMITTED'").run(item.import_id);
+      if (!editable.changes) throw new Error("이미 출고되었거나 삭제된 주문서는 수정할 수 없습니다.");
       await db
         .prepare(
           "UPDATE order_import_items SET matched_product_id=?,quantity=?,confidence=1 WHERE id=?",
@@ -1520,7 +1526,7 @@ app.use(
     res.status(message.includes("UNIQUE") ? 409 : 400).json({ message });
   },
 );
-if (!process.env.VERCEL)
+if (!process.env.VERCEL && process.env.NODE_ENV !== "test")
   app.listen(Number(process.env.PORT) || 4000, async () =>
     console.log(`API: http://localhost:${Number(process.env.PORT) || 4000}/api`),
   );

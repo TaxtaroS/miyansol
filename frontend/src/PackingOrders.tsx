@@ -10,8 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { majorCategory, majorOrder, subCategory } from "./product-categories";
-import { readOrderImage, readOrderPdf } from "./browser-ocr";
-import { imageToPdf } from "./image-pdf";
+import { orderMimeType, orderResponse, prepareOrderUpload } from "./order-upload";
 import "./OrderPreview.css";
 
 type Product = {
@@ -24,7 +23,8 @@ type Product = {
   pickingStock: number;
 };
 type Vendor = { id: number; name: string };
-type ImageOcr = {name:string;pdfName:string;pdfBlob:Blob;url:string;text:string;progress:number;status:"reading"|"ready"|"error"};
+type DocumentPreview = {name:string;type:string;url:string};
+type AnalysisState = {status:"reading"|"done"|"error";message:string};
 type ImportRow = {
   id: number;
   vendor: string;
@@ -50,6 +50,25 @@ type Summary = {
   total_shortage: number;
   stock_status: "READY" | "NEEDS_PACKING" | "SHORTAGE" | "UNMATCHED";
 };
+
+function OrderItemEditor({item,products,disabled,onSaved}:{
+  item:{id:number;source_name:string;quantity:number;matched_product_id:number|null};
+  products:Product[];disabled:boolean;onSaved:()=>Promise<void>;
+}) {
+  const [productId,setProductId] = useState(item.matched_product_id || 0);
+  const [quantity,setQuantity] = useState(item.quantity);
+  const [saving,setSaving] = useState(false);
+  const [error,setError] = useState("");
+  const save = async () => {
+    setSaving(true);setError("");
+    try {
+      await orderResponse(await fetch(`/api/order-import-items/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({productId,quantity})}));
+      await onSaved();
+    } catch (error) { setError(error instanceof Error ? error.message : "품목 수정에 실패했습니다."); }
+    finally { setSaving(false); }
+  };
+  return <tr><td>{item.source_name}{error && <p role="alert">{error}</p>}</td><td><select aria-label={`${item.source_name} 등록 상품`} value={productId} disabled={disabled || saving} onChange={event=>setProductId(Number(event.target.value))}><option value={0}>상품 확인 필요</option>{products.map(product=><option key={product.id} value={product.id}>{product.name} · {product.sku}</option>)}</select></td><td><input aria-label={`${item.source_name} 수량`} type="number" min={1} step={1} value={quantity} disabled={disabled || saving} onChange={event=>setQuantity(Number(event.target.value))}/></td><td><button disabled={disabled || saving || !productId || !Number.isInteger(quantity) || quantity < 1} onClick={()=>void save()}>{saving ? "저장 중" : "품목 확인·저장"}</button></td></tr>;
+}
 
 function ManualOrderEntry({
   products,
@@ -259,15 +278,16 @@ export default function PackingOrders({
   const [vendor, setVendor] = useState("");
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [files, setFiles] = useState<File[]>([]);
-  const [imageOcr, setImageOcr] = useState<ImageOcr[]>([]);
+  const [documentPreviews, setDocumentPreviews] = useState<DocumentPreview[]>([]);
+  const [analysisStates, setAnalysisStates] = useState<Record<number, AnalysisState>>({});
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pdfPreparing, setPdfPreparing] = useState(false);
   const [reviewMajor, setReviewMajor] = useState("");
   const [reviewProductId, setReviewProductId] = useState(0);
   const [reviewQuantity, setReviewQuantity] = useState(1);
+  const [documentVersion, setDocumentVersion] = useState(0);
   const [preview, setPreview] = useState<{
     row: ImportRow;
     items: Array<{
@@ -304,35 +324,31 @@ export default function PackingOrders({
       .then((r) => r.json())
       .then(setVendors);
   }, []);
-  const selectFiles = async (selected: File[]) => {
-    setPdfPreparing(true);
-    imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
-    setFiles(selected);
-    const documents=selected.filter(file=>file.type.startsWith("image/")||file.type==="application/pdf"||file.name.toLowerCase().endsWith(".pdf"));
-    try{
-      const previews=await Promise.all(documents.map(async file=>{
-        const pdf=file.type.startsWith("image/")?await imageToPdf(file):{name:file.name,blob:file,url:URL.createObjectURL(file)};
-        return {name:file.name,pdfName:pdf.name,pdfBlob:pdf.blob,url:pdf.url,text:"",progress:0,status:"reading" as const};
-      }));
-      setImageOcr(previews);
-    }finally{
-      setPdfPreparing(false);
-    }
-    for(const file of documents){
-      try{
-        const recognized=file.type.startsWith("image/")
-          ?await readOrderImage(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)))
-          :await readOrderPdf(file,progress=>setImageOcr(current=>current.map(row=>row.name===file.name?{...row,progress}:row)));
-        const correctedPdf=file.type.startsWith("image/")?await imageToPdf(file,recognized.rotation):{name:file.name,blob:file,url:URL.createObjectURL(file)};
-        setImageOcr(current=>current.map(row=>{
-          if(row.name!==file.name)return row;
-          URL.revokeObjectURL(row.url);
-          return {...row,pdfName:correctedPdf.name,pdfBlob:correctedPdf.blob,url:correctedPdf.url,text:recognized.text,progress:1,status:"ready"};
-        }));
-      }catch{
-        setImageOcr(current=>current.map(row=>row.name===file.name?{...row,text:"",status:"error"}:row));
-      }
-    }
+  useEffect(() => {
+    const previews = files.filter(file => orderMimeType(file).startsWith("image/") || orderMimeType(file) === "application/pdf")
+      .map(file => ({name:file.name,type:orderMimeType(file),url:URL.createObjectURL(file)}));
+    setDocumentPreviews(previews);
+    return () => previews.forEach(row => URL.revokeObjectURL(row.url));
+  }, [files]);
+  const analyze = async (id: number) => {
+    setAnalysisStates(current => ({...current, [id]:{status:"reading",message:"상품명·수량 분석 중"}}));
+    try {
+      const data = await orderResponse<{rows:number;engine:string}>(await fetch(`/api/order-imports/${id}/analyze`, {method:"POST",signal:AbortSignal.timeout(60000)}));
+      setAnalysisStates(current => ({...current, [id]:{status:"done",message:`${data.rows}개 품목 분석 완료`}}));
+      return data.rows;
+    } catch (error) {
+      const message = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+        ? "분석 시간이 초과되었습니다. 목록을 새로 확인한 뒤 다시 분석해 주세요."
+        : error instanceof Error ? error.message : "문서 분석에 실패했습니다.";
+      setAnalysisStates(current => ({...current, [id]:{status:"error",message}}));
+      throw new Error(message);
+    } finally { await load(); }
+  };
+  const retryAnalysis = async (id: number) => {
+    setBusy(true);
+    try { await analyze(id); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "문서 분석에 실패했습니다."); }
+    finally { setBusy(false); }
   };
   const readyIds = useMemo(
     () =>
@@ -343,7 +359,6 @@ export default function PackingOrders({
   );
   const stockReady =
     summary.length > 0 && summary.every((row) => row.stock_status === "READY");
-  const documentReading = imageOcr.some((row) => row.status === "reading");
   const upload = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!vendor.trim() || !files.length) {
@@ -351,43 +366,32 @@ export default function PackingOrders({
       return;
     }
     setBusy(true);
-    setMessage("주문서를 먼저 등록한 뒤 품목 분석 결과를 채우고 있습니다.");
-    const body = new FormData();
-    body.append("vendor", vendor.trim());
-    body.append("ocrTexts",JSON.stringify(imageOcr.filter(row=>row.status==="ready"&&row.text.trim()).map(({pdfName,text})=>({name:pdfName,text}))));
-    files.forEach((file) => {
-      body.append("files",file);
-    });
+    const failures: string[] = [];
+    const registered: Array<{id:number;filename:string}> = [];
+    const remaining = [...files];
     try {
-      const response = await fetch("/api/order-imports", {
-        method: "POST",
-        body,
-      });
-      const responseText=await response.text();
-      let data:{message?:string;imports?:Array<{id:number}>}={};
-      try{data=JSON.parse(responseText)}catch{throw new Error(`주문서 서버 응답 오류 (${response.status}). 잠시 후 다시 시도해 주세요.`)}
-      if (!response.ok) throw new Error(data.message);
-      setMessage(
-        `${data.imports?.length||0}개 주문서를 등록했습니다. 확인 필요 품목을 검토해 주세요.`,
-      );
-      setFiles([]);
-      imageOcr.forEach(row=>URL.revokeObjectURL(row.url));
-      setImageOcr([]);
-      if (inputRef.current) inputRef.current.value = "";
+      for (const [index, file] of files.entries()) {
+        setMessage(`주문서 저장 중 ${index+1}/${files.length}: ${file.name}`);
+        try {
+          const prepared = await prepareOrderUpload(file);
+          const body = new FormData();
+          body.append("vendor", vendor.trim());
+          body.append("files", prepared);
+          const data = await orderResponse<{imports:Array<{id:number;filename:string}>}>(await fetch("/api/order-imports", {method:"POST",body}));
+          registered.push(...data.imports);
+          remaining.splice(remaining.indexOf(file),1);
+          setFiles([...remaining]);
+        } catch (error) { failures.push(`${file.name}: ${error instanceof Error ? error.message : "업로드 실패"}`); }
+      }
+      if (!remaining.length && inputRef.current) inputRef.current.value = "";
       await load();
-      void Promise.all((data.imports||[]).map(async row=>{
-        const analysisResponse=await fetch(`/api/order-imports/${row.id}/analyze`,{method:"POST"});
-        const analysisData=await analysisResponse.json();
-        if(!analysisResponse.ok)throw new Error(analysisData.message||"Gemini 주문서 분석에 실패했습니다.");
-        return analysisData;
-      }))
-        .then(async results=>{setMessage(`Gemini 분석 완료: ${results.reduce((sum,row)=>sum+(row.rows||0),0)}개 품목을 찾았습니다.`);await load()})
-        .catch(async error=>{setMessage(error instanceof Error?error.message:"Gemini 주문서 분석에 실패했습니다.");await load()});
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "문서 분석에 실패했습니다.",
-      );
-      await load();
+      let itemCount = 0;
+      for (const [index, row] of registered.entries()) {
+        setMessage(`상품명·수량 분석 중 ${index+1}/${registered.length}: ${row.filename}`);
+        try { itemCount += await analyze(row.id); }
+        catch (error) { failures.push(`${row.filename}: ${error instanceof Error ? error.message : "분석 실패"}`); }
+      }
+      setMessage(`${registered.length}개 주문서 저장 · ${itemCount}개 품목 분석. ${failures.length ? failures.join(" / ") : "원본과 명세서를 대조해 주세요."}`);
     } finally {
       setBusy(false);
     }
@@ -431,7 +435,16 @@ export default function PackingOrders({
     await load();
     const refreshed = await fetch(`/api/order-imports/${preview.row.id}/items`).then(r=>r.json());
     setPreview(current=>current?{...current,items:refreshed.items||[]}:current);
+    setDocumentVersion(version=>version+1);
     setMessage("주문서에 품목을 추가했습니다.");
+  };
+  const refreshReview = async () => {
+    if (!preview) return;
+    const id = preview.row.id;
+    const refreshed = await orderResponse<{items:typeof preview.items}>(await fetch(`/api/order-imports/${id}/items`));
+    setPreview(current=>current?.row.id === id ? {...current,items:refreshed.items} : current);
+    setDocumentVersion(version=>version+1);
+    await load();
   };
   const confirmReview = async () => {
     if (!preview) return;
@@ -500,6 +513,7 @@ export default function PackingOrders({
             거래처 선택
             <select
               value={vendor}
+              disabled={busy}
               onChange={(event) => setVendor(event.target.value)}
             >
               <option value="">거래처를 선택하세요</option>
@@ -517,7 +531,8 @@ export default function PackingOrders({
               type="file"
               multiple
               accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.xlsx"
-              onChange={(event) => void selectFiles([...(event.target.files || [])])}
+              disabled={busy}
+              onChange={(event) => setFiles([...(event.target.files || [])])}
             />
             <small>
               {files.length
@@ -525,17 +540,17 @@ export default function PackingOrders({
                 : "여러 파일을 한 번에 선택할 수 있습니다."}
             </small>
           </label>
-          <button className="primary" disabled={busy || pdfPreparing || !vendors.length || !files.length}>
+          <button className="primary" disabled={busy || !vendors.length || !files.length}>
             <Upload size={18} />
-            {busy ? "주문서 등록 중" : pdfPreparing ? "PDF 변환 중" : documentReading ? "주문서 먼저 등록" : "주문서 등록 및 분석"}
+            {busy ? "주문서 처리 중" : "주문서 등록 및 분석"}
           </button>
         </form>
-        {imageOcr.length>0&&<div className="image-pdf-section">
-          <div className="image-pdf-heading"><div><h3>변환된 PDF 주문서</h3><p>사진의 표와 순서를 그대로 유지한 PDF입니다.</p></div></div>
+        {documentPreviews.length>0&&<div className="image-pdf-section">
+          <div className="image-pdf-heading"><div><h3>선택한 원본 주문서</h3><p>사진·PDF에서 상품명과 수량을 읽어 명세서로 정리합니다.</p></div></div>
           <div className="image-ocr-list">
-          {imageOcr.map(row=><section className="image-ocr-card" key={row.name}>
-            <div className="image-ocr-preview"><iframe src={row.url} title={`${row.name} PDF 미리보기`}/><div className="image-pdf-file"><strong>{row.name}</strong><a className="primary" href={row.url} target="_blank" rel="noreferrer">PDF 크게 열기</a></div></div>
-            <div className="image-analysis-status"><strong>PDF 변환 완료</strong><span>{row.status==="reading"?`상품 문자 분석 중 ${Math.round(row.progress*100)}%`:row.status==="ready"?"자동 분석 완료":"자동 분석이 부족합니다."}</span><small>PDF에서 원본 주문서를 확인하세요. 빠지거나 잘못 읽힌 품목은 아래 수동 출고 입력에서 추가할 수 있습니다.</small></div>
+          {documentPreviews.map((row,index)=><section className="image-ocr-card" key={`${row.name}-${index}`}>
+            <div className="image-ocr-preview">{row.type.startsWith("image/") ? <img className="order-source-image" src={row.url} alt={`${row.name} 원본`}/> : <iframe src={row.url} title={`${row.name} 원본 PDF`}/>}<div className="image-pdf-file"><strong>{row.name}</strong><a className="primary" href={row.url} target="_blank" rel="noreferrer">원본 크게 열기</a></div></div>
+            <div className="image-analysis-status"><strong>분석 준비 완료</strong><span>등록 및 분석 버튼을 눌러 주세요.</span><small>원본을 저장한 뒤 상품명·수량을 분석합니다. 불분명한 품목은 확인 필요로 표시합니다.</small></div>
           </section>)}
           </div>
         </div>}
@@ -544,7 +559,7 @@ export default function PackingOrders({
             먼저 거래처 관리에서 거래처를 등록해 주세요.
           </div>
         )}
-        {message && <div className="notice">{message}</div>}
+        {message && <div className="notice" role="status">{message}</div>}
       </div>
       <ManualOrderEntry products={products} vendors={vendors} onSaved={load} />
       <div className="panel">
@@ -600,7 +615,7 @@ export default function PackingOrders({
                       </button>
                     </td>
                     <td>
-                      {row.status === "READY" ? (
+                      {analysisStates[row.id]?.status === "reading" ? <span className="order-review">상품명·수량 분석 중…</span> : row.status === "READY" ? (
                         <span className="order-ready">
                           <CheckCircle2 size={15} />
                           매칭 완료
@@ -610,7 +625,7 @@ export default function PackingOrders({
                       ) : row.item_count === 0 ? (
                         <span className="order-review">
                           <AlertTriangle size={15} />
-                          품목 인식 실패 · 다시 분석 필요
+                          분석 대기 · 다시 분석 가능
                         </span>
                       ) : (
                         <span className="order-review">
@@ -620,9 +635,12 @@ export default function PackingOrders({
                       )}
                     </td>
                     <td>
+                      {analysisStates[row.id]?.status === "error" && <p className="order-analysis-error" role="alert">{analysisStates[row.id].message}</p>}
+                      {row.status !== "COMMITTED" && row.file_type !== "manual" && row.item_count === 0 && <button className="order-preview-button" disabled={busy} onClick={() => void retryAnalysis(row.id)}>다시 분석</button>}
                       {row.status !== "COMMITTED" && (
                         <button
                           className="queue-remove"
+                          disabled={busy}
                           onClick={() => void remove(row.id)}
                           title="삭제"
                         >
@@ -650,8 +668,8 @@ export default function PackingOrders({
               <div>
                 <h2>{preview.row.vendor} 주문서 확인</h2>
                 <p>
-                  {preview.row.filename} · {preview.row.item_count}개 품목 · 총{" "}
-                  {preview.row.total_quantity}개
+                  {preview.row.filename} · {preview.items.length}개 품목 · 총{" "}
+                  {preview.items.reduce((sum,item)=>sum+item.quantity,0)}개
                 </p>
               </div>
               <button onClick={() => setPreview(null)}>
@@ -662,13 +680,17 @@ export default function PackingOrders({
               (()=>{const groups=new Map<string,typeof preview.items>();for(const item of preview.items){const matched=products.find(product=>product.id===item.matched_product_id);const category=matched?majorCategory(matched):"매칭 필요";groups.set(category,[...(groups.get(category)||[]),item])}const ordered=[...groups].sort(([a],[b])=>{const ai=majorOrder.indexOf(a),bi=majorOrder.indexOf(b);return(ai<0?999:ai)-(bi<0?999:bi)||a.localeCompare(b,"ko-KR")});return <div className="manual-dashboard-grid">{ordered.map(([category,rows])=><section className="manual-dashboard-card" key={category}><h3>{category}<small>{rows.length}품목</small></h3><div>{rows.map(item=><article key={item.id}><span><b>{item.matched_name||item.source_name}</b><small>{item.sku||"상품코드 없음"}</small></span><strong>{item.quantity.toLocaleString()}</strong></article>)}</div><footer>합계 <b>{rows.reduce((sum,item)=>sum+item.quantity,0).toLocaleString()}개</b></footer></section>)}</div>})()
             ) : (
               <div className="reconstructed-order-view">
-                <div className="reconstructed-order-toolbar"><b>{preview.items.length ? "분석 결과로 재구성한 주문서 PDF" : "원본 주문서를 보면서 품목을 추가하세요"}</b><a href={`/api/order-imports/${preview.row.id}/preview`} target="_blank" rel="noreferrer">원본 PDF 크게 보기</a></div>
-                <iframe className="order-pdf-preview" src={preview.items.length?`/api/order-imports/${preview.row.id}/reconstructed-pdf`:`/api/order-imports/${preview.row.id}/preview`} title={`${preview.row.vendor} 주문서 PDF`}/>
+                <div className="reconstructed-order-toolbar"><b>{preview.items.length ? "원본과 정리된 명세서를 대조해 주세요" : "원본 주문서를 보면서 품목을 추가하세요"}</b><a href={`/api/order-imports/${preview.row.id}/preview`} target="_blank" rel="noreferrer">원본 크게 보기</a>{preview.items.length > 0 && <a href={`/api/order-imports/${preview.row.id}/document`} target="_blank" rel="noreferrer">명세서 인쇄 / PDF 저장</a>}</div>
+                <div className="order-document-comparison">
+                  <section><h3>원본 주문서</h3><iframe className="order-pdf-preview" src={`/api/order-imports/${preview.row.id}/preview`} title={`${preview.row.vendor} 원본 주문서`}/></section>
+                  {preview.items.length > 0 && <section><h3>정리된 출고 명세서</h3><iframe className="order-pdf-preview" src={`/api/order-imports/${preview.row.id}/document?v=${documentVersion}`} title={`${preview.row.vendor} 출고 명세서`}/></section>}
+                </div>
+                {preview.items.length > 0 && <div className="order-item-editors"><h3>상품명·수량 검토</h3><table><thead><tr><th>원본 판독 내용</th><th>등록 상품</th><th>수량</th><th>검토</th></tr></thead><tbody>{preview.items.map(item=><OrderItemEditor key={`${item.id}-${item.matched_product_id}-${item.quantity}`} item={item} products={products} disabled={busy || preview.row.status === "COMMITTED"} onSaved={refreshReview}/>)}</tbody></table></div>}
                 <div className="review-item-entry">
                   <label>대분류<select value={reviewMajor} onChange={event=>{setReviewMajor(event.target.value);setReviewProductId(0)}}><option value="">전체 대분류</option>{reviewMajors.map(value=><option key={value}>{value}</option>)}</select></label>
                   <label>상품 선택<select value={reviewProductId} onChange={event=>setReviewProductId(Number(event.target.value))}><option value={0}>상품을 선택하세요</option>{reviewProducts.map(product=><option key={product.id} value={product.id}>{subCategory(product)} · {product.name}</option>)}</select></label>
                   <label>수량<input type="number" min={1} value={reviewQuantity} onChange={event=>setReviewQuantity(Number(event.target.value))}/></label>
-                  <button className="primary" onClick={()=>void addReviewItem()}><Plus size={16}/> 품목 추가</button>
+                  <button className="primary" disabled={busy || preview.row.status === "COMMITTED"} onClick={()=>void addReviewItem()}><Plus size={16}/> 품목 추가</button>
                 </div>
               </div>
             )}
@@ -676,7 +698,7 @@ export default function PackingOrders({
               <button className="queue-clear" onClick={() => setPreview(null)}>
                 닫기
               </button>
-              <button className="primary" disabled={!preview.items.length} onClick={() => void confirmReview()}>
+              <button className="primary" disabled={busy || !preview.items.length || preview.items.some(item=>!item.matched_product_id) || preview.row.status === "COMMITTED"} onClick={() => void confirmReview()}>
                 <CheckCircle2 size={17} /> 내용 확인 완료
               </button>
             </div>

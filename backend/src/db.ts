@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const dataDir = path.resolve(__dirname, '../data');
 fs.mkdirSync(dataDir, { recursive: true });
-export const db = new Database(path.join(dataDir, 'inventory.db'));
+export const db = new Database(process.env.SQLITE_DATABASE_PATH || path.join(dataDir, 'inventory.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
