@@ -204,6 +204,7 @@ function shinsegaeLabelValues(item: Label | QueueItem) {
 }
 
 function displayCode(item: Label) {
+  if (vendorKind(item.vendor) === 'export') return templateValues(item)[2]?.trim() || '';
   if (item.vendor === SHILLA_VENDOR) return shillaLabelValues(item).code;
   if (item.vendor === SHINSEGAE_VENDOR) return shinsegaeLabelValues(item).code;
   if (vendorKind(item.vendor) === 'lotte') return lotteLabelValues(item).code;
@@ -265,7 +266,7 @@ function labelMarkup(item: QueueItem, copy: number) {
     const lotte = lotteLabelValues(item);
     return `<article class="label lotte" data-copy="${copy}"><div class="plain-code" style="font-size:${fitFont(lotte.code,11.5,6.5,9)}pt">${escapeHtml(lotte.code)}</div><div class="plain-title" style="font-size:${fitFont(lotte.name,6.5,3.9,28)}pt">${escapeHtml(lotte.name)}</div></article>`;
   }
-  if (kind === 'export') return `<article class="label export" data-copy="${copy}"><div class="export-brand">${first}</div><div class="export-title">${second}</div><div class="export-code">${third}</div></article>`;
+  if (kind === 'export') return `<article class="label export" data-copy="${copy}"><div class="export-brand">${first}</div><div class="export-title">${escapeHtml(values[1] || displayProductName(item))}</div><div class="export-code">${escapeHtml(values[2] || '')}</div></article>`;
   if (kind === 'dutyfree') return `<article class="label dutyfree" data-copy="${copy}"><div class="dutyfree-title">${first}</div></article>`;
   return `<article class="label standard" data-copy="${copy}"><div class="standard-brand">[miyansol]</div><div class="standard-title">${name}</div><div class="standard-bars">${barcodeSvg(item.barcode || '')}</div></article>`;
 }

@@ -4,8 +4,28 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 import base64
-import fitz
 import re
+from io import BytesIO
+
+try:
+    import fitz
+except Exception:  # pragma: no cover - PyMuPDF can be blocked on some Windows policies
+    fitz = None
+
+try:
+    from pypdf import PdfReader
+except Exception:  # pragma: no cover - pypdf is optional fallback
+    PdfReader = None
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - pillow is optional fallback
+    Image = None
+
+try:
+    import pytesseract
+except Exception:  # pragma: no cover - pytesseract is optional fallback
+    pytesseract = None
 
 app = FastAPI()
 
@@ -26,41 +46,108 @@ class OrderPreviewRequest(BaseModel):
 
 @app.get("/document-api/health")
 def health():
-    return {"ok": True, "engine": "pymupdf"}
+    return {"ok": fitz is not None or PdfReader is not None, "engine": "pymupdf" if fitz is not None else "pypdf-fallback"}
+
+
+def _fallback_extract_pdf_text(content: bytes):
+    if PdfReader is None:
+        raise RuntimeError("PDF 텍스트 추출을 위해 pypdf가 설치되지 않았습니다.")
+
+    pages = []
+    text_parts = []
+    reader = PdfReader(BytesIO(content))
+    for page_number, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        text_parts.append(text)
+        pages.append({
+            "page_number": page_number,
+            "source_label": f"Page {page_number}",
+            "text": text,
+        })
+    return pages, "\n".join(text_parts)
+
+
+def _fallback_extract_image_text(content: bytes, filename: str):
+    if Image is None or pytesseract is None:
+        raise RuntimeError("이미지 OCR을 위해 pillow / pytesseract가 설치되지 않았습니다.")
+
+    image = Image.open(BytesIO(content))
+    text = pytesseract.image_to_string(image, config="--psm 6") or ""
+    return [{"page_number": 1, "source_label": "Page 1", "text": text}], text
 
 
 @app.post("/document-api/extract-pdf")
 async def extract_pdf(file: UploadFile = File(...)):
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="빈 PDF 파일입니다.")
+        raise HTTPException(status_code=400, detail="빈 문서 파일입니다.")
+
+    filename = (file.filename or "document.bin").lower()
+    extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    filetype = "pdf" if extension == "pdf" else (
+        extension if extension in {"png", "jpg", "jpeg", "webp", "bmp"} else "pdf"
+    )
 
     try:
-        pages = []
-        with fitz.open(stream=content, filetype="pdf") as document:
-            for page_number, page in enumerate(document, start=1):
-                text = page.get_text("text") or ""
-                page_data = {
-                    "page_number": page_number,
-                    "source_label": f"Page {page_number}",
-                    "text": text,
+        if filetype == "pdf":
+            if fitz is not None:
+                pages = []
+                with fitz.open(stream=content, filetype=filetype) as document:
+                    for page_number, page in enumerate(document, start=1):
+                        text = page.get_text("text") or ""
+                        page_data = {
+                            "page_number": page_number,
+                            "source_label": f"Page {page_number}",
+                            "text": text,
+                        }
+                        if len(text.strip()) < 20 and page_number <= 20:
+                            matrix = fitz.Matrix(2.2, 2.2)
+                            pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csGRAY, alpha=False)
+                            page_data["image_base64"] = base64.b64encode(
+                                pixmap.tobytes("png")
+                            ).decode("ascii")
+                        pages.append(page_data)
+                payload = {
+                    "engine": "papemate-pymupdf",
+                    "pages": pages,
+                    "text": "\n".join(page["text"] for page in pages),
                 }
-                # Scanned order sheets have no selectable text. Render those pages
-                # here with PyMuPDF so the Node service never needs browser PDF APIs.
-                if len(text.strip()) < 20 and page_number <= 20:
-                    matrix = fitz.Matrix(2.2, 2.2)
-                    pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csGRAY, alpha=False)
-                    page_data["image_base64"] = base64.b64encode(
-                        pixmap.tobytes("png")
-                    ).decode("ascii")
-                pages.append(page_data)
-        return {
-            "engine": "papemate-pymupdf",
-            "pages": pages,
-            "text": "\n".join(page["text"] for page in pages),
-        }
+            else:
+                pages, extracted_text = _fallback_extract_pdf_text(content)
+                payload = {
+                    "engine": "papemate-pypdf-fallback",
+                    "pages": pages,
+                    "text": extracted_text,
+                }
+        else:
+            if fitz is not None:
+                pages = []
+                with fitz.open(stream=content, filetype=filetype) as document:
+                    for page_number, page in enumerate(document, start=1):
+                        text = page.get_text("text") or ""
+                        pages.append({
+                            "page_number": page_number,
+                            "source_label": f"Page {page_number}",
+                            "text": text,
+                            "image_base64": base64.b64encode(
+                                fitz.Pixmap(content).tobytes("png")
+                            ).decode("ascii"),
+                        })
+                payload = {
+                    "engine": "papemate-pymupdf",
+                    "pages": pages,
+                    "text": "\n".join(page["text"] for page in pages),
+                }
+            else:
+                pages, extracted_text = _fallback_extract_image_text(content, filename)
+                payload = {
+                    "engine": "papemate-image-ocr-fallback",
+                    "pages": pages,
+                    "text": extracted_text,
+                }
+        return payload
     except Exception as error:
-        raise HTTPException(status_code=400, detail=f"PDF를 읽지 못했습니다: {error}") from error
+        raise HTTPException(status_code=400, detail=f"문서를 읽지 못했습니다: {error}") from error
 
 
 def _draw_order_page(document, request: OrderPreviewRequest, page_number: int):
@@ -77,6 +164,8 @@ def _draw_order_page(document, request: OrderPreviewRequest, page_number: int):
 @app.post("/document-api/order-preview")
 def order_preview(request: OrderPreviewRequest):
     """PaperMate-style source units rendered as a normalized MIYANSOL order PDF."""
+    if fitz is None:
+        raise HTTPException(status_code=503, detail="PDF 미리보기에 필요한 PyMuPDF를 사용할 수 없습니다.")
     document = fitz.open()
     page_number = 1
     page = _draw_order_page(document, request, page_number)
