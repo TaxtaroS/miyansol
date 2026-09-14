@@ -145,12 +145,39 @@ function youngpoongMajorCategory(item: Label | QueueItem) {
   return '기타';
 }
 
-const youngpoongPrices: Record<string,number> = {
-  '미니백':64000,'메모리백':139000,'하트백':98000,'만두백':119000,'듀얼백':149000,'아코디언백':168000,
-  '호피백':139000,'미니 파우치':14000,'퀼팅 파우치':35000,'스퀘어 파우치 A':29000,'스퀘어 파우치 B':58000,
-  '스퀘어 3파우치':119000,'라군 빅백':168000,'피어백':159000,'피어미니백':149000,'브릭백':129000,
-  '꽃참':19000,'플라워키':19000,'롱참':26000,'미니참':26000,'로프참':29000,'털실폼폼':29000,
-  '타월참':19000,'하트참':19000,'럭키참':26000,'솔참':32000,'핸드폰 스트랩':43000,'멍미참':43000,'로프 스트랩':30000,
+const youngpoongPrices: Record<string,{ default:number; size?:Record<string,number> }> = {
+  '기본백': { default: 56000, size: { S: 54000, L: 56000 } },
+  '미니백': { default: 64000 },
+  '메모리백': { default: 139000 },
+  '하트백': { default: 98000 },
+  '만두백': { default: 119000 },
+  '듀얼백': { default: 149000 },
+  '아코디언백': { default: 168000 },
+  '어그백': { default: 129000, size: { M: 129000, L: 139000 } },
+  '밍크백': { default: 139000, size: { M: 139000, L: 149000 } },
+  '호피백': { default: 139000 },
+  '미니 파우치': { default: 14000 },
+  '퀼팅 파우치': { default: 35000 },
+  '스퀘어 파우치 A': { default: 29000 },
+  '스퀘어 파우치 B': { default: 58000 },
+  '스퀘어 3파우치': { default: 119000 },
+  '라군 빅백': { default: 168000 },
+  '피어백': { default: 159000 },
+  '피어미니백': { default: 149000 },
+  '브릭백': { default: 129000 },
+  '꽃참': { default: 19000 },
+  '플라워키': { default: 19000 },
+  '롱참': { default: 26000 },
+  '미니참': { default: 26000 },
+  '로프참': { default: 29000 },
+  '털실폼폼': { default: 29000 },
+  '타월참': { default: 19000 },
+  '하트참': { default: 19000 },
+  '럭키참': { default: 26000 },
+  '솔참': { default: 32000 },
+  '핸드폰 스트랩': { default: 43000 },
+  '멍미참': { default: 43000 },
+  '로프 스트랩': { default: 30000 },
 };
 
 function retailPriceText(item: Label | QueueItem) {
@@ -159,10 +186,8 @@ function retailPriceText(item: Label | QueueItem) {
   const major = youngpoongMajorCategory(item);
   const source = [item.product_name,item.dashboard_name,item.catalog_name,...templateValues(item)].filter(Boolean).join(' ');
   const size = source.match(/(?:^|\s)([LMS])(?:\s|$)/i)?.[1]?.toUpperCase();
-  const price = major === '기본백' ? (size === 'L' ? 56000 : 54000)
-    : major === '어그백' ? (size === 'L' ? 139000 : 129000)
-    : major === '밍크백' ? (size === 'L' ? 149000 : 139000)
-    : youngpoongPrices[major];
+  const priceConfig = youngpoongPrices[major];
+  const price = priceConfig ? (size && priceConfig.size ? priceConfig.size[size] ?? priceConfig.default : priceConfig.default) : undefined;
   return price ? `판매가격 : ${price.toLocaleString('ko-KR')}` : '판매가격 확인 필요';
 }
 
@@ -251,8 +276,13 @@ function labelMarkup(item: QueueItem, copy: number) {
   // Sellmate 88-code label: supplier code, original English product name and
   // CODE128 bars must retain the exact 40×20 layout used in Sellmate.
   if (item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand">[miyansol]&nbsp; ${escapeHtml(values[0] || '')}</div><div class="standard-title">${escapeHtml(values[1] || item.product_name)}</div><div class="standard-bars">${barcodeSvg(barcode,{format:'CODE128',fontSize:18,height:50,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
-  // Kyobo/Youngpoong remains a separate price-label format.
-  if (kind === 'retail') return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand" style="font-size:${fitFont(`[미야앤솔] ${displayProductName(item)}`,7.3,4.5,23)}pt">[미야앤솔] ${name}</div><div class="standard-title" style="font-size:${fitFont(values[2] || '',6.2,4.5,20)}pt">${third}</div><div class="standard-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:54,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
+  // Kyobo/Youngpoong keeps the Sellmate product list and barcode, but adds a
+  // price line in the same large-format retail layout used by the reference.
+  if (kind === 'retail') {
+    const retailName = displayProductName(item) || item.product_name;
+    const retailTitle = retailName.trim() || '상품명 확인 필요';
+    return `<article class="label retail-print" data-copy="${copy}"><div class="retail-print-name">[미야앤솔] ${escapeHtml(retailTitle)}</div><div class="retail-print-price">${escapeHtml(third)}</div><div class="retail-print-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:20,height:78,width:2.15,font:'Arial',fontOptions:''})}</div></article>`;
+  }
   if (item.vendor === SHILLA_VENDOR) {
     const shilla = shillaLabelValues(item);
     return `<article class="label shilla" data-copy="${copy}"><div class="shilla-code">${escapeHtml(shilla.code)}</div><div class="shilla-title" style="font-size:${fitFont(shilla.name,10,5.8,31)}pt">${escapeHtml(shilla.name)}</div><div class="shilla-bars">${barcodeSvg(shilla.code,{format:'CODE128',fontSize:28,height:70,width:2,font:'Gulim',fontOptions:''})}</div></article>`;
@@ -279,8 +309,8 @@ function printQueueDocument(queue: QueueItem[]) {
   popup.document.open();
   popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>MIYANSOL 라벨 일괄출력</title><style>
     *{box-sizing:border-box}html,body{margin:0;background:#eee;font-family:Arial,'Malgun Gothic',sans-serif}.label{position:relative;width:40mm;height:20mm;padding:.35mm .25mm;background:#fff;color:#000;overflow:hidden;break-after:page;page-break-after:always;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.label:last-child{break-after:auto;page-break-after:auto}.label>div{width:100%;white-space:nowrap;overflow:hidden;text-overflow:clip}.no-barcode{font-size:5pt}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.shilla{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.shilla-code{position:absolute;left:4.755975mm;top:1mm;width:30.530046mm!important;height:4.2541866mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-size:10pt;font-weight:700;line-height:1;letter-spacing:0}.shilla-title{position:absolute;left:4.368764mm;top:5mm;width:31.280787mm!important;height:3.1280785mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:700;line-height:1;letter-spacing:0}.shilla-bars{position:absolute;left:2.4827213mm;top:8mm;width:35.03448mm!important;height:10.6mm;overflow:visible!important}.shilla-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.plain-code,.plain-title{padding:0;line-height:1.08}.plain-code{font-weight:700}.lotte{gap:2.3mm}.lotte .plain-title{font-weight:700;letter-spacing:-.13mm}.shinsegae{gap:2.1mm}.shinsegae .plain-title{font-weight:500;letter-spacing:-.12mm}.export{gap:1.25mm}.export-brand{font-size:9.4pt;font-weight:700}.export-title{font-size:5.4pt;font-weight:700;letter-spacing:-.12mm}.export-code{font-size:9.2pt;font-weight:700}.dutyfree{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.dutyfree .dutyfree-title{position:absolute;left:3.8660936mm;top:8mm;width:31.280787mm;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-size:10pt;font-weight:400;font-style:normal;line-height:1;letter-spacing:0;text-align:center}.standard-brand{font-size:7.3pt;font-weight:700}.standard-title{font-size:5.5pt;font-weight:700;letter-spacing:-.12mm}.standard-bars{height:10.8mm;width:100%}.standard-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}@media screen{body{padding:10mm}.label{margin:0 auto 28mm;box-shadow:0 2px 12px #0002;transform:scale(2);transform-origin:top center}}@media print{html,body{background:#fff}.label{margin:0;box-shadow:none}@page{size:40mm 20mm;margin:0}}
-    .shinsegae-myeongdong{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.shinsegae-code{position:absolute;left:4.7994184mm;top:2.7426543mm;width:30.530046mm!important;height:7.006896mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:700;line-height:1;letter-spacing:0}.shinsegae-title{position:absolute;left:3.8660936mm;top:10.824545mm;width:31.280787mm!important;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:400;line-height:1;letter-spacing:0}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;font-weight:700;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;font-weight:700;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{overflow:visible}.lotte{padding-left:.08mm;padding-right:.08mm}.lotte .plain-title{width:100%;max-width:none;letter-spacing:-.18mm}.sellmate{justify-content:flex-start;padding:.35mm 1.75mm 1.1mm;font-family:Arial,'Malgun Gothic',sans-serif}.sellmate .standard-brand{height:3.45mm;line-height:3.45mm;font-size:8.05pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:3.65mm;line-height:3.65mm;font-size:7.15pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:10.2mm;padding:0 .25mm;overflow:hidden}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.08mm;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}
-    @media screen{.label.sellmate{width:377px;height:194px;transform:none;padding:5px 18px 11px;margin:0 auto 20px}.sellmate .standard-brand{height:34px;line-height:34px;font-size:33px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:36px;line-height:36px;font-size:32px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:91px;padding:0 3px}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.6px;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}}
+    .shinsegae-myeongdong{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.shinsegae-code{position:absolute;left:4.7994184mm;top:2.7426543mm;width:30.530046mm!important;height:7.006896mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:700;line-height:1;letter-spacing:0}.shinsegae-title{position:absolute;left:3.8660936mm;top:10.824545mm;width:31.280787mm!important;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:400;line-height:1;letter-spacing:0}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;font-weight:700;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;font-weight:700;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{overflow:visible}.retail-print{justify-content:flex-start;align-items:center;padding:2.4mm 5mm 1.2mm;border:2px solid #1c9a50;background:#fff;font-family:Arial,'Malgun Gothic',sans-serif}.retail-print-name{width:100%;font-size:18pt;font-weight:700;line-height:1.15;letter-spacing:-.12mm;text-align:center;white-space:normal;overflow:hidden}.retail-print-price{width:100%;margin-top:.8mm;font-size:16pt;font-weight:700;line-height:1.15;letter-spacing:-.1mm;text-align:center;white-space:nowrap;overflow:hidden}.retail-print-bars{width:100%;height:12.8mm;margin-top:.8mm;display:flex;align-items:center;justify-content:center}.retail-print-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.retail-print-bars svg text{font-size:16px!important;font-weight:700}.lotte{padding-left:.08mm;padding-right:.08mm}.lotte .plain-title{width:100%;max-width:none;letter-spacing:-.18mm}.sellmate{justify-content:flex-start;padding:.35mm 1.75mm 1.1mm;font-family:Arial,'Malgun Gothic',sans-serif}.sellmate .standard-brand{height:3.45mm;line-height:3.45mm;font-size:8.05pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:3.65mm;line-height:3.65mm;font-size:7.15pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:10.2mm;padding:0 .25mm;overflow:hidden}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.08mm;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}
+    @media screen{.label.sellmate{width:377px;height:194px;transform:none;padding:5px 18px 11px;margin:0 auto 20px}.sellmate .standard-brand{height:34px;line-height:34px;font-size:33px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:36px;line-height:36px;font-size:32px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:91px;padding:0 3px}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.6px;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}.retail-print{width:377px;height:194px;padding:10px 18px 11px;margin:0 auto 20px}.retail-print-name{font-size:31px;line-height:1.1}.retail-print-price{font-size:27px}.retail-print-bars{height:86px;margin-top:9px}}
   </style></head><body>${pages}<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
   popup.document.close();
   return true;
