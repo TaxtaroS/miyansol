@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pencil, Plus, Printer, Search, Trash2 } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
+import { isRetailVendor, retailCategory, retailPriceText, retailLabelName, retailLabelProblem, retailLabelMarkup } from './retail-label';
+import retailLabelStyles from './retail-label.css?raw';
 import './LabelVendorManagement.css';
 import { majorCategory as dashboardMajorCategory, majorOrder } from './product-categories';
 
@@ -11,15 +13,12 @@ type QueueItem = Label & { quantity: number };
 const categoryOrder: readonly string[] = majorOrder.flatMap(value => value === '만두백' ? [value,'듀얼백'] : value === '피어백' ? [value,'피어미니백'] : [value]);
 const SHILLA_VENDOR = '신라_온라인_제주점_라벨';
 const SHINSEGAE_VENDOR = '신세계_온라인_명동점_인천공항_라벨';
-const YOUNGPOONG_VENDOR = '영풍 이요샵';
 const vendorSamples: Record<string,string> = {
   '셀메이트':'/uploads/label-samples/sellmate.png',
-  '영풍 이요샵':'/uploads/label-samples/youngpoong-eyoshop.png',
   '중국_미국라벨':'/uploads/label-samples/china-usa-export.png',
   [SHILLA_VENDOR]:'/uploads/label-samples/shilla-online-jeju.png',
   [SHINSEGAE_VENDOR]:'/uploads/label-samples/shinsegae-online.png',
   '신세계온라인 샘플라벨':'/uploads/label-samples/shinsegae-online.png',
-  '교보영풍':'/uploads/label-samples/kyobo-youngpoong.png',
   '롯데_온라인':'/uploads/label-samples/lotte-online.png',
   '면세점_제주_부산_부산항_용두산_김해라벨':'/uploads/label-samples/duty-free.png',
 };
@@ -34,7 +33,7 @@ function majorCategory(label: Label) {
   if (label.vendor === SHILLA_VENDOR) return label.category.trim() || '기타';
   // Shinsegae Myeongdong/Airport labels keep their UniLabel folder names.
   if (label.vendor === SHINSEGAE_VENDOR) return label.category.trim() || '기타';
-  if (label.vendor === YOUNGPOONG_VENDOR) return youngpoongMajorCategory(label);
+  if (isRetailVendor(label.vendor)) return retailCategory(label);
   if (label.product_id && label.dashboard_name) {
     return dashboardMajorCategory({name:label.dashboard_name,catalog_name:label.catalog_name || undefined});
   }
@@ -108,88 +107,6 @@ function templateValues(item: Label | QueueItem) {
   } catch { return []; }
 }
 
-function youngpoongMajorCategory(item: Label | QueueItem) {
-  const source = [item.category,item.product_name,item.dashboard_name,item.catalog_name,...templateValues(item)].filter(Boolean).join(' ').toLowerCase().replace(/\s/g,'');
-  if (source.includes('basicbag') || source.includes('기본백')) return '기본백';
-  if (source.includes('minibag') || source.includes('미니백')) return '미니백';
-  if (source.includes('heartbag') || source.includes('하트백')) return '하트백';
-  if (source.includes('pierbagmini') || source.includes('minipier') || source.includes('미니피어')) return '피어미니백';
-  if (source.includes('pierbag') || source.includes('피어백')) return '피어백';
-  if (source.includes('lagoon') || source.includes('라군')) return '라군 빅백';
-  if (source.includes('accordion') || source.includes('아코디언')) return '아코디언백';
-  if (source.includes('brick') || source.includes('브릭')) return '브릭백';
-  if (source.includes('memory') || source.includes('메모리')) return '메모리백';
-  if (source.includes('dualbag') || source.includes('듀얼백')) return '듀얼백';
-  if (source.includes('minipouch') || source.includes('미니파우치')) return '미니 파우치';
-  if (source.includes('quiltingpouch') || source.includes('퀼팅') || source.includes('퀄팅')) return '퀼팅 파우치';
-  if (source.includes('square3pouch') || source.includes('스퀘어3')) return '스퀘어 3파우치';
-  if (source.includes('squarepoucha') || source.includes('스퀘어파우치a')) return '스퀘어 파우치 A';
-  if (source.includes('squarepouchb') || source.includes('스퀘어파우치b')) return '스퀘어 파우치 B';
-  if (source.includes('mandubag') || source.includes('만두백')) return '만두백';
-  if (source.includes('hopimink') || source.includes('leopardbag') || source.includes('호피백')) return '호피백';
-  if (source.includes('minkbag') || source.includes('밍크백')) return '밍크백';
-  if (source.includes('uggbag') || source.includes('어그백')) return '어그백';
-  if (source.includes('meongmi') || source.includes('멍미')) return '멍미참';
-  if (source.includes('flowerkey') || source.includes('플라워키') || source.includes('꽃키')) return '플라워키';
-  if (source.includes('flowercharm') || source.includes('꽃참')) return '꽃참';
-  if (source.includes('heartcharm') || source.includes('하트참')) return '하트참';
-  if (source.includes('towelcharm') || source.includes('타월참') || source.includes('타올참')) return '타월참';
-  if (source.includes('luckycharm') || source.includes('럭키참')) return '럭키참';
-  if (source.includes('minicharm') || source.includes('미니구슬') || source.includes('미니참')) return '미니참';
-  if (source.includes('longcharm') || source.includes('롱구슬') || source.includes('롱참')) return '롱참';
-  if (source.includes('ropestrap') || source.includes('로프스트랩')) return '로프 스트랩';
-  if (source.includes('hpstrap') || source.includes('핸드폰스트랩')) return '핸드폰 스트랩';
-  if (source.includes('solcharm') || source.includes('솔참') || source.includes('술참')) return '솔참';
-  if (source.includes('teolsil') || source.includes('털실')) return '털실폼폼';
-  if (source.includes('ropecharm') || source.includes('로프참')) return '로프참';
-  return '기타';
-}
-
-const youngpoongPrices: Record<string,{ default:number; size?:Record<string,number> }> = {
-  '기본백': { default: 56000, size: { S: 54000, L: 56000 } },
-  '미니백': { default: 64000 },
-  '메모리백': { default: 139000 },
-  '하트백': { default: 98000 },
-  '만두백': { default: 119000 },
-  '듀얼백': { default: 149000 },
-  '아코디언백': { default: 168000 },
-  '어그백': { default: 129000, size: { M: 129000, L: 139000 } },
-  '밍크백': { default: 139000, size: { M: 139000, L: 149000 } },
-  '호피백': { default: 139000 },
-  '미니 파우치': { default: 14000 },
-  '퀼팅 파우치': { default: 35000 },
-  '스퀘어 파우치 A': { default: 29000 },
-  '스퀘어 파우치 B': { default: 58000 },
-  '스퀘어 3파우치': { default: 119000 },
-  '라군 빅백': { default: 168000 },
-  '피어백': { default: 159000 },
-  '피어미니백': { default: 149000 },
-  '브릭백': { default: 129000 },
-  '꽃참': { default: 19000 },
-  '플라워키': { default: 19000 },
-  '롱참': { default: 26000 },
-  '미니참': { default: 26000 },
-  '로프참': { default: 29000 },
-  '털실폼폼': { default: 29000 },
-  '타월참': { default: 19000 },
-  '하트참': { default: 19000 },
-  '럭키참': { default: 26000 },
-  '솔참': { default: 32000 },
-  '핸드폰 스트랩': { default: 43000 },
-  '멍미참': { default: 43000 },
-  '로프 스트랩': { default: 30000 },
-};
-
-function retailPriceText(item: Label | QueueItem) {
-  const stored = templateValues(item)[2]?.trim();
-  if (item.vendor !== YOUNGPOONG_VENDOR) return stored || '판매가격 확인 필요';
-  const major = youngpoongMajorCategory(item);
-  const source = [item.product_name,item.dashboard_name,item.catalog_name,...templateValues(item)].filter(Boolean).join(' ');
-  const size = source.match(/(?:^|\s)([LMS])(?:\s|$)/i)?.[1]?.toUpperCase();
-  const priceConfig = youngpoongPrices[major];
-  const price = priceConfig ? (size && priceConfig.size ? priceConfig.size[size] ?? priceConfig.default : priceConfig.default) : undefined;
-  return price ? `판매가격 : ${price.toLocaleString('ko-KR')}` : '판매가격 확인 필요';
-}
 
 function normalizedBarcode(value: string | null | undefined) {
   return (value || '').replace(/[\s-]/g, '');
@@ -257,12 +174,8 @@ function fitFont(value: string, maximum: number, minimum: number, capacity: numb
 }
 
 function RetailLiveSample({item,large=false}:{item:Label;large?:boolean}) {
-  const barcode = primaryBarcode(item);
-  return <div className={`retail-live-sample${large?' large':''}`}>
-    <div className="retail-live-name">[미야앤솔] {displayProductName(item)}</div>
-    <div className="retail-live-price">{retailPriceText(item)}</div>
-    <div className="retail-live-bars" dangerouslySetInnerHTML={{__html:barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:16,height:54,width:1.55})}} />
-  </div>;
+  const problem=retailLabelProblem(item);
+  return problem ? <span>{problem}</span> : <div className={`retail-preview${large?' retail-preview-large':''}`}><style>{retailLabelStyles}</style><div dangerouslySetInnerHTML={{__html:retailLabelMarkup(item)}}/></div>;
 }
 
 function labelMarkup(item: QueueItem, copy: number) {
@@ -272,17 +185,12 @@ function labelMarkup(item: QueueItem, copy: number) {
   const barcode = primaryBarcode(item);
   const first = escapeHtml(values[0] || displayProductName(item));
   const second = escapeHtml(barcode);
-  const third = escapeHtml(retailPriceText(item));
   // Sellmate 88-code label: supplier code, original English product name and
   // CODE128 bars must retain the exact 40×20 layout used in Sellmate.
   if (item.vendor.includes('셀메이트')) return `<article class="label standard sellmate" data-copy="${copy}"><div class="standard-brand">[miyansol]&nbsp; ${escapeHtml(values[0] || '')}</div><div class="standard-title">${escapeHtml(values[1] || item.product_name)}</div><div class="standard-bars">${barcodeSvg(barcode,{format:'CODE128',fontSize:18,height:50,width:1.55,font:'Arial',fontOptions:''})}</div></article>`;
   // Kyobo/Youngpoong keeps the Sellmate product list and barcode, but adds a
   // price line in the same large-format retail layout used by the reference.
-  if (kind === 'retail') {
-    const retailName = displayProductName(item) || item.product_name;
-    const retailTitle = retailName.trim() || '상품명 확인 필요';
-    return `<article class="label retail-print" data-copy="${copy}"><div class="retail-print-name" style="font-size:${fitFont(`[미야앤솔] ${retailTitle}`, 28, 15, 26)}pt">[미야앤솔] ${escapeHtml(retailTitle)}</div><div class="retail-print-price" style="font-size:${fitFont(third, 26, 15, 18)}pt">${escapeHtml(third)}</div><div class="retail-print-bars">${barcodeSvg(barcode,{format:/^\d{13}$/.test(barcode)?'EAN13':'CODE128',fontSize:22,height:78,width:2.6,font:'Arial',fontOptions:''})}</div></article>`;
-  }
+  if (isRetailVendor(item.vendor)) return retailLabelMarkup(item, copy);
   if (item.vendor === SHILLA_VENDOR) {
     const shilla = shillaLabelValues(item);
     return `<article class="label shilla" data-copy="${copy}"><div class="shilla-code">${escapeHtml(shilla.code)}</div><div class="shilla-title" style="font-size:${fitFont(shilla.name,10,5.8,31)}pt">${escapeHtml(shilla.name)}</div><div class="shilla-bars">${barcodeSvg(shilla.code,{format:'CODE128',fontSize:28,height:70,width:2,font:'Gulim',fontOptions:''})}</div></article>`;
@@ -309,8 +217,9 @@ function printQueueDocument(queue: QueueItem[]) {
   popup.document.open();
   popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>MIYANSOL 라벨 일괄출력</title><style>
     *{box-sizing:border-box}html,body{margin:0;background:#eee;font-family:Arial,'Malgun Gothic',sans-serif}.label{position:relative;width:40mm;height:20mm;padding:.35mm .25mm;background:#fff;color:#000;overflow:hidden;break-after:page;page-break-after:always;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.label:last-child{break-after:auto;page-break-after:auto}.label>div{width:100%;white-space:nowrap;overflow:hidden;text-overflow:clip}.no-barcode{font-size:5pt}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.shilla{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.shilla-code{position:absolute;left:4.755975mm;top:1mm;width:30.530046mm!important;height:4.2541866mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-size:10pt;font-weight:700;line-height:1;letter-spacing:0}.shilla-title{position:absolute;left:4.368764mm;top:5mm;width:31.280787mm!important;height:3.1280785mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:700;line-height:1;letter-spacing:0}.shilla-bars{position:absolute;left:2.4827213mm;top:8mm;width:35.03448mm!important;height:10.6mm;overflow:visible!important}.shilla-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.plain-code,.plain-title{padding:0;line-height:1.08}.plain-code{font-weight:700}.lotte{gap:2.3mm}.lotte .plain-title{font-weight:700;letter-spacing:-.13mm}.shinsegae{gap:2.1mm}.shinsegae .plain-title{font-weight:500;letter-spacing:-.12mm}.export{gap:1.25mm}.export-brand{font-size:9.4pt;font-weight:700}.export-title{font-size:5.4pt;font-weight:700;letter-spacing:-.12mm}.export-code{font-size:9.2pt;font-weight:700}.dutyfree{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.dutyfree .dutyfree-title{position:absolute;left:3.8660936mm;top:8mm;width:31.280787mm;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-size:10pt;font-weight:400;font-style:normal;line-height:1;letter-spacing:0;text-align:center}.standard-brand{font-size:7.3pt;font-weight:700}.standard-title{font-size:5.5pt;font-weight:700;letter-spacing:-.12mm}.standard-bars{height:10.8mm;width:100%}.standard-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}@media screen{body{padding:10mm}.label{margin:0 auto 28mm;box-shadow:0 2px 12px #0002;transform:scale(2);transform-origin:top center}}@media print{html,body{background:#fff}.label{margin:0;box-shadow:none}@page{size:40mm 20mm;margin:0}}
-    .shinsegae-myeongdong{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.shinsegae-code{position:absolute;left:4.7994184mm;top:2.7426543mm;width:30.530046mm!important;height:7.006896mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:700;line-height:1;letter-spacing:0}.shinsegae-title{position:absolute;left:3.8660936mm;top:10.824545mm;width:31.280787mm!important;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:400;line-height:1;letter-spacing:0}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;font-weight:700;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;font-weight:700;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{overflow:visible}.retail-print{justify-content:flex-start;align-items:center;padding:4mm 5mm 1.5mm;background:#fff;color:#000;font-family:Arial,'Malgun Gothic',sans-serif}.retail-print-name{width:100%;font-weight:700;line-height:1.12;letter-spacing:-.12mm;text-align:center;white-space:nowrap;overflow:hidden}.retail-print-price{width:100%;margin-top:1mm;font-weight:700;line-height:1.2;letter-spacing:-.08mm;text-align:center;white-space:nowrap;overflow:hidden}.retail-print-bars{width:100%;height:13.5mm;margin-top:1.3mm;display:flex;align-items:center;justify-content:center}.retail-print-bars svg{display:block;width:100%!important;height:100%!important;max-width:none}.retail-print-bars svg text{font-size:16px!important;font-weight:700}.lotte{padding-left:.08mm;padding-right:.08mm}.lotte .plain-title{width:100%;max-width:none;letter-spacing:-.18mm}.sellmate{justify-content:flex-start;padding:.35mm 1.75mm 1.1mm;font-family:Arial,'Malgun Gothic',sans-serif}.sellmate .standard-brand{height:3.45mm;line-height:3.45mm;font-size:8.05pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:3.65mm;line-height:3.65mm;font-size:7.15pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:10.2mm;padding:0 .25mm;overflow:hidden}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.08mm;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}
-    @media screen{.label.sellmate{width:377px;height:194px;transform:none;padding:5px 18px 11px;margin:0 auto 20px}.sellmate .standard-brand{height:34px;line-height:34px;font-size:33px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:36px;line-height:36px;font-size:32px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:91px;padding:0 3px}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.6px;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}.retail-print{width:377px;height:194px;padding:10px 18px 11px;margin:0 auto 20px}.retail-print-name{line-height:1.1}.retail-print-price{line-height:1.1}.retail-print-bars{height:91px;margin-top:7px}}
+    .shinsegae-myeongdong{padding:0;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif}.shinsegae-code{position:absolute;left:4.7994184mm;top:2.7426543mm;width:30.530046mm!important;height:7.006896mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:700;line-height:1;letter-spacing:0}.shinsegae-title{position:absolute;left:3.8660936mm;top:10.824545mm;width:31.280787mm!important;height:4.1290636mm;display:flex;align-items:center;justify-content:center;overflow:visible!important;font-family:'Microsoft Sans Serif','Malgun Gothic',sans-serif;font-weight:400;line-height:1;letter-spacing:0}.retail{justify-content:flex-start;padding:.2mm .35mm 0}.retail-title{height:3.7mm;font-weight:700;line-height:3.7mm;letter-spacing:-.12mm}.retail-price{height:3.2mm;font-weight:700;line-height:3.2mm}.retail-bars{height:12.6mm;width:100%}.retail-bars svg{overflow:visible}.lotte{padding-left:.08mm;padding-right:.08mm}.lotte .plain-title{width:100%;max-width:none;letter-spacing:-.18mm}.sellmate{justify-content:flex-start;padding:.35mm 1.75mm 1.1mm;font-family:Arial,'Malgun Gothic',sans-serif}.sellmate .standard-brand{height:3.45mm;line-height:3.45mm;font-size:8.05pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:3.65mm;line-height:3.65mm;font-size:7.15pt;font-weight:700;letter-spacing:-.08mm;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:10.2mm;padding:0 .25mm;overflow:hidden}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.08mm;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}
+    @media screen{.label.sellmate{width:377px;height:194px;transform:none;padding:5px 18px 11px;margin:0 auto 20px}.sellmate .standard-brand{height:34px;line-height:34px;font-size:33px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.055);transform-origin:center}.sellmate .standard-title{height:36px;line-height:36px;font-size:32px;font-weight:700;letter-spacing:-.5px;transform:scaleX(1.14);transform-origin:center}.sellmate .standard-bars{height:91px;padding:0 3px}.sellmate .standard-bars svg{width:100%!important;height:100%!important}.sellmate .standard-bars svg text{font-weight:400;letter-spacing:.6px;transform:scaleX(.88);transform-box:fill-box;transform-origin:center}}
+    ${retailLabelStyles}
   </style></head><body>${pages}<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
   popup.document.close();
   return true;
@@ -346,11 +255,13 @@ export default function LabelOutput() {
   const syncRetailBarcodes=async(selectedVendor=vendor)=>{const response=await fetch('/api/labels/sync-product-barcodes',{method:'POST'});const data=await response.json();if(!response.ok){setMessage(data.message||'셀메이트 바코드 동기화에 실패했습니다.');return}setMessage(`셀메이트 원본 ${data.sellmateSource}개를 기준으로 기존 ${data.updated}개를 교체하고 새 라벨 ${data.created}개를 추가했습니다. 이미 일치 ${data.alreadyCurrent}개, 코드 확인 필요 ${data.missing}개입니다.`);await loadVendors();const refreshed=await fetch(`/api/labels?vendor=${encodeURIComponent(selectedVendor)}&search=${encodeURIComponent(search)}`);setLabels(await refreshed.json())};
 
   const add = (label: Label) => setQueue(current => {
-    const found = current.find(item => item.id === label.id);
-    return found ? current.map(item => item.id === label.id ? {...item, quantity: item.quantity + 1} : item) : [...current, {...label, quantity: 1}];
+    const found = current.find(item => item.id === label.id && item.vendor === label.vendor);
+    return found ? current.map(item => item.id === label.id && item.vendor === label.vendor ? {...item, quantity: item.quantity + 1} : item) : [...current, {...label, quantity: 1}];
   });
   const updateQuantity = (id: number, quantity: number) => setQueue(current => current.map(item => item.id === id ? {...item, quantity: Math.max(1, quantity || 1)} : item));
   const printAll = () => {
+    const invalid=queue.find(item=>isRetailVendor(item.vendor) && retailLabelProblem(item));
+    if(invalid){setMessage(`${retailLabelName(invalid)}: ${retailLabelProblem(invalid)}. 금액과 바코드를 확인한 뒤 인쇄해 주세요.`);return;}
     if (!queue.length) { setMessage('인쇄 대기목록에 품목을 먼저 추가해 주세요.'); return; }
     const total = queue.reduce((sum,item)=>sum+item.quantity,0);
     setMessage(`총 ${total}매를 공급처 원본 디자인으로 한 번에 만들었습니다.`);
@@ -371,12 +282,12 @@ export default function LabelOutput() {
         <strong>통합검색</strong>
         <div className="barcode-search-input"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="상품명 또는 바코드"/></div>
       </div>
-      <div className="vendor-sample-bar"><strong>선택 공급처 라벨 샘플</strong>{liveRetailSample?<button className="vendor-sample-button" onClick={()=>setSampleOpen(true)}><RetailLiveSample item={liveRetailSample}/><span><b>{vendor}</b><small>현재 셀메이트 코드로 만든 실제 출력 미리보기입니다.</small></span></button>:samplePath?<button className="vendor-sample-button" onClick={()=>setSampleOpen(true)}><img src={samplePath} alt={`${vendor} 라벨 샘플`}/><span><b>{vendor}</b><small>이미지를 누르면 크게 확인할 수 있습니다.</small></span></button>:<span className="vendor-sample-guide">주요 공급처를 선택하면 대표 라벨이 표시됩니다.</span>}</div>
-      <div className="barcode-results"><div className="result-count">검색 결과 {results.length}개</div><div className="table"><table><thead><tr><th>공급처</th><th>대분류</th><th>상품명</th><th>라벨 코드</th><th></th></tr></thead><tbody>{results.map(label=><tr key={label.id}><td>{label.vendor}</td><td>{majorCategory(label)}</td><td>{displayProductName(label)}</td><td>{displayCode(label)||'-'}</td><td><button className="queue-add" onClick={()=>add(label)}><Plus size={16}/> 대기목록 추가</button></td></tr>)}</tbody></table></div></div>
+      <div className="vendor-sample-bar"><strong>선택 공급처 라벨 샘플</strong>{liveRetailSample?<button className="vendor-sample-button" onClick={()=>setSampleOpen(true)}><RetailLiveSample item={liveRetailSample}/><span><b>{vendor}</b><small>판매가격을 포함한 교보·영풍 전용 출력 미리보기입니다.</small></span></button>:samplePath?<button className="vendor-sample-button" onClick={()=>setSampleOpen(true)}><img src={samplePath} alt={`${vendor} 라벨 샘플`}/><span><b>{vendor}</b><small>이미지를 누르면 크게 확인할 수 있습니다.</small></span></button>:<span className="vendor-sample-guide">주요 공급처를 선택하면 대표 라벨이 표시됩니다.</span>}</div>
+      <div className="barcode-results"><div className="result-count">검색 결과 {results.length}개</div><div className="table"><table><thead><tr><th>공급처</th><th>대분류</th><th>상품명</th><th>라벨 코드</th><th>판매가격</th><th></th></tr></thead><tbody>{results.map(label=><tr key={label.id}><td>{label.vendor}</td><td>{majorCategory(label)}</td><td>{displayProductName(label)}</td><td>{displayCode(label)||'-'}</td><td>{isRetailVendor(label.vendor)?retailPriceText(label):'-'}</td><td><button className="queue-add" onClick={()=>add(label)}><Plus size={16}/> 대기목록 추가</button></td></tr>)}</tbody></table></div></div>
     </div>
     <div className="panel print-queue-panel">
       <div className="queue-heading"><div><h2>인쇄 대기목록</h2><p>{queue.length}개 품목 · 총 {queue.reduce((sum,item)=>sum+item.quantity,0)}매 · 한 번에 출력</p></div><div><button className="queue-clear" onClick={()=>setQueue([])} disabled={!queue.length}>전체 비우기</button><button className="primary batch-print" onClick={printAll} disabled={!queue.length}><Printer size={18}/> 전체 라벨 인쇄</button></div></div>
-      {!queue.length?<div className="empty-queue">위 상품 목록에서 필요한 라벨을 대기목록에 추가해 주세요.</div>:<div className="table queue-table"><table><thead><tr><th>순서</th><th>공급처</th><th>대분류</th><th>상품명</th><th>라벨 코드</th><th>출력 매수</th><th></th></tr></thead><tbody>{queue.map((item,index)=><tr key={item.id}><td>{index+1}</td><td>{item.vendor}</td><td>{majorCategory(item)}</td><td>{displayProductName(item)}</td><td>{displayCode(item)||'-'}</td><td><input type="number" min="1" value={item.quantity} onChange={e=>updateQuantity(item.id,Number(e.target.value))}/></td><td><button className="queue-remove" onClick={()=>setQueue(current=>current.filter(row=>row.id!==item.id))} title="삭제"><Trash2 size={17}/></button></td></tr>)}</tbody></table></div>}
+      {!queue.length?<div className="empty-queue">위 상품 목록에서 필요한 라벨을 대기목록에 추가해 주세요.</div>:<div className="table queue-table"><table><thead><tr><th>순서</th><th>공급처</th><th>대분류</th><th>상품명</th><th>라벨 코드</th><th>판매가격</th><th>출력 매수</th><th></th></tr></thead><tbody>{queue.map((item,index)=><tr key={item.id}><td>{index+1}</td><td>{item.vendor}</td><td>{majorCategory(item)}</td><td>{displayProductName(item)}</td><td>{displayCode(item)||'-'}</td><td>{isRetailVendor(item.vendor)?retailPriceText(item):'-'}</td><td><input type="number" min="1" value={item.quantity} onChange={e=>updateQuantity(item.id,Number(e.target.value))}/></td><td><button className="queue-remove" onClick={()=>setQueue(current=>current.filter(row=>row.id!==item.id))} title="삭제"><Trash2 size={17}/></button></td></tr>)}</tbody></table></div>}
       {message&&<div className="notice">{message}</div>}
     </div>
     {sampleOpen&&(liveRetailSample||samplePath)&&<div className="label-sample-overlay" onMouseDown={()=>setSampleOpen(false)}><div className="label-sample-popup" onMouseDown={event=>event.stopPropagation()}><button onClick={()=>setSampleOpen(false)}>×</button><h2>{vendor} 라벨 샘플</h2>{liveRetailSample?<RetailLiveSample item={liveRetailSample} large/>:<img src={samplePath} alt={`${vendor} 라벨 샘플 크게 보기`}/>}</div></div>}

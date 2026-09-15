@@ -626,28 +626,35 @@ app.get("/api/movements", async (req, res) =>
 app.get("/api/labels", async (req, res) => {
   const search = `%${String(req.query.search || "")}%`;
   const vendor = String(req.query.vendor || "");
-  // Youngpoong display labels always mirror the current Sellmate catalog.
+  // Retail labels use only the current Sellmate product list and barcode data.
   // Returning them from the live Sellmate source prevents partial store-file
   // imports from dropping newer products or retaining retired barcodes.
-  if (vendor === "영풍 이요샵") {
+  if (vendor === "영풍 이요샵" || vendor === "교보영풍") {
     return res.json(
       await db.prepare(
-        `SELECT -l.id id,? vendor,l.category,l.product_name,l.barcode,l.template_data,l.product_id,p.image_path,p.name dashboard_name,p.catalog_name
+        `SELECT -(l.id*2+?) id,? vendor,l.category,l.product_name,l.barcode,NULL template_data,l.product_id,p.image_path,p.name dashboard_name,p.catalog_name
          FROM label_templates l
          LEFT JOIN products p ON p.id=l.product_id
          WHERE l.vendor='셀메이트' AND (p.id IS NULL OR p.active=1)
            AND (l.product_name LIKE ? OR l.barcode LIKE ?)
          ORDER BY l.category,l.product_name LIMIT 5000`,
-      ).all(vendor, search, search),
+      ).all(vendor === "교보영풍" ? 1 : 0, vendor, search, search),
     );
   }
-  res.json(
-    await db
+  const rows = await db
       .prepare(
         `SELECT l.id,l.vendor,l.category,l.product_name,l.barcode,l.template_data,l.product_id,p.image_path,p.name dashboard_name,p.catalog_name FROM label_templates l LEFT JOIN products p ON p.id=l.product_id WHERE (p.id IS NULL OR p.active=1) AND (?='' OR l.vendor=?) AND (l.product_name LIKE ? OR l.barcode LIKE ?) ORDER BY l.vendor,l.category,l.product_name LIMIT 5000`,
       )
-      .all(vendor, vendor, search, search),
-  );
+      .all(vendor, vendor, search, search) as Array<{vendor:string}>;
+  if (vendor) return res.json(rows);
+  const retailVendors = await db.prepare("SELECT name FROM label_vendors WHERE active=1 AND name IN ('교보영풍','영풍 이요샵')").all() as Array<{name:string}>;
+  const mirrors = await Promise.all(retailVendors.map(({name}) => db.prepare(
+    `SELECT -(l.id*2+?) id,? vendor,l.category,l.product_name,l.barcode,NULL template_data,l.product_id,p.image_path,p.name dashboard_name,p.catalog_name
+     FROM label_templates l LEFT JOIN products p ON p.id=l.product_id
+     WHERE l.vendor='셀메이트' AND (p.id IS NULL OR p.active=1)
+       AND (l.product_name LIKE ? OR l.barcode LIKE ?) ORDER BY l.category,l.product_name LIMIT 5000`
+  ).all(name === '교보영풍' ? 1 : 0, name, search, search)));
+  res.json([...rows.filter(row=>!['교보영풍','영풍 이요샵'].includes(row.vendor)), ...mirrors.flat()]);
 });
 app.get("/api/labels/vendors", async (_req, res) => {
   const vendors = (await db.prepare(
@@ -656,7 +663,7 @@ app.get("/api/labels/vendors", async (_req, res) => {
   const sellmate = (await db.prepare(
     "SELECT COUNT(l.id) count FROM label_templates l LEFT JOIN products p ON p.id=l.product_id WHERE l.vendor='셀메이트' AND (p.id IS NULL OR p.active=1)",
   ).get()) as {count:number};
-  res.json(vendors.map(item => item.vendor === "영풍 이요샵" ? {...item,count:sellmate.count} : item));
+  res.json(vendors.map(item => ["영풍 이요샵", "교보영풍"].includes(item.vendor) ? {...item,count:sellmate.count} : item));
 });
 app.post("/api/labels/import-store-catalog", async (req, res, next) => {
   try {

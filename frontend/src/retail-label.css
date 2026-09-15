@@ -1,0 +1,12 @@
+.retail-label{box-sizing:border-box;position:relative;width:40mm;height:20mm;padding:.7mm 1mm;background:#fff;color:#000;font-family:Arial,'Malgun Gothic',sans-serif;text-align:center;overflow:hidden;break-after:page;page-break-after:always;display:flex;flex-direction:column;align-items:center}
+.retail-label:last-child{break-after:auto;page-break-after:auto}
+.retail-label-name{width:100%;height:3.6mm;flex:none;line-height:3.6mm;font-weight:700;white-space:nowrap;overflow:hidden}
+.retail-label-price{width:100%;height:3.6mm;flex:none;line-height:3.6mm;font-size:7.5pt;font-weight:700;white-space:nowrap}
+.retail-label-bars{width:100%;height:11.4mm;flex:none}
+.retail-label-bars svg{display:block;width:100%;height:100%}
+.retail-preview{width:151.2px;height:75.6px;flex:none;text-align:left}
+.retail-preview-large{width:378px;height:189px;max-width:100%;margin:auto}
+.retail-preview-large>div{transform:scale(2.5);transform-origin:top left}
+@media(max-width:480px){.retail-preview-large{width:272px;height:136px}.retail-preview-large>div{transform:scale(1.8)}}
+@media screen{body>.retail-label{margin:0 auto 10mm;zoom:2.5}}
+@media print{.retail-label{margin:0;zoom:1;page:retail-price-label}@page retail-price-label{size:40mm 20mm;margin:0}}
